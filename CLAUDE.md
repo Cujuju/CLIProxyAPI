@@ -10,3 +10,8 @@ See AGENTS.md for upstream conventions. Desktop-facing API: docs/desktop-api.md.
 ## Fork checks
 - The desktop app ships Windows and macOS builds. Cross-compile before committing: `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./cmd/server` (and `GOOS=linux`).
 - Go treats a `_<GOOS>.go` / `_<GOARCH>.go` file-name suffix as a build constraint (e.g. `quota_windows.go` builds only on Windows). Name files so they don't end in one unless that's intended.
+
+## Upstream sync
+- `scripts/sync-upstream.sh` on a clean `main`: merges `upstream/main` (merge, not rebase: `main` is published), builds, cross-compiles the desktop targets and runs `go test ./...`. It never pushes.
+- Known upstream failure on Windows: `TestResponsesInterruptStopsHTTPUpstream` (sdk/api/handlers/openai) fails at the pre-fork commit too; don't treat it as a merge regression.
+- Fork-only changes worth re-checking after a merge: `sdk/cliproxy/auth` (soonest-reset, quota exhaustion, first-byte timeout, selection IDs, preferred auth) and `internal/api/handlers/management/desktop_*.go`.
