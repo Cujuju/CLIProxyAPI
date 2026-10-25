@@ -6,7 +6,15 @@ management authentication: `Authorization: Bearer <key>` or `X-Management-Key: <
 
 ## Enabling management for a local supervisor
 
-Either set a key in `config.yaml` (v8 layout):
+Recommended: start the proxy with `MANAGEMENT_SUPERVISOR_PASSWORD` set to a fresh
+random value of at least 32 characters. The proxy reads it once, clears it from
+its own environment (plugins and child processes never see it), and accepts it
+only from loopback. It skips the failed-attempt IP ban: every local process
+shares 127.0.0.1, so another program sending 5 wrong keys would otherwise lock
+the supervisor out for 30 minutes. Wrong keys are still counted and banned as
+usual. No key is written to `config.yaml`, so the proxy never rewrites one.
+
+Alternatively, set a key in `config.yaml` (v8 layout):
 
 ```yaml
 management:

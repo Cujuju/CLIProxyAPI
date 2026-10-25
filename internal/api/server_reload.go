@@ -138,10 +138,10 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 		prevSecretEmpty = oldCfg.RemoteManagement.SecretKey == ""
 	}
 	newSecretEmpty := cfg.RemoteManagement.SecretKey == ""
-	if s.envManagementSecret {
+	if s.envManagementSecret || s.hasRuntimeManagementPassword() {
 		s.registerManagementRoutes()
 		if s.managementRoutesEnabled.CompareAndSwap(false, true) {
-			log.Info("management routes enabled via MANAGEMENT_PASSWORD")
+			log.Info("management routes enabled via a runtime management password")
 		} else {
 			s.managementRoutesEnabled.Store(true)
 		}

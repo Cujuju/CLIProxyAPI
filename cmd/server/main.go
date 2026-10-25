@@ -261,6 +261,10 @@ func main() {
 			log.WithError(errLoad).Warn("failed to load .env file")
 		}
 	}
+	supervisorPassword, errSupervisor := takeSupervisorPassword()
+	if errSupervisor != nil {
+		log.Fatal(errSupervisor)
+	}
 
 	lookupEnv := func(keys ...string) (string, bool) {
 		for _, key := range keys {
@@ -666,6 +670,9 @@ func main() {
 	homeMode := configLoadedFromHome || (cfg != nil && cfg.Home.Enabled)
 	exampleAPIKeySafeMode := shouldEnableExampleAPIKeySafeMode(cfg, commandMode, tuiMode, standalone, cloudConfigMissing, homeMode)
 	serverOptions := []api.ServerOption(nil)
+	if supervisorPassword != "" {
+		serverOptions = append(serverOptions, api.WithSupervisorPassword(supervisorPassword))
+	}
 	if exampleAPIKeySafeMode {
 		matches := safemode.ExampleAPIKeys(cfg.APIKeys)
 		log.WithField("api_keys", strings.Join(matches, ",")).Error("unsafe example API key configured; proxy API endpoints disabled until api-keys is updated")

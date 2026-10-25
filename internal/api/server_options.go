@@ -19,6 +19,7 @@ type serverOptionConfig struct {
 	routerConfigurator    func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)
 	requestLoggerFactory  func(*config.Config, string) logging.RequestLogger
 	localPassword         string
+	supervisorPassword    string
 	keepAliveEnabled      bool
 	keepAliveTimeout      time.Duration
 	keepAliveOnTimeout    func()
@@ -78,6 +79,13 @@ func WithRouterConfigurator(fn func(*gin.Engine, *handlers.BaseAPIHandler, *conf
 func WithLocalManagementPassword(password string) ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.localPassword = password
+	}
+}
+
+// WithSupervisorPassword sets the desktop supervisor's per-launch management password (loopback only, exempt from the IP ban).
+func WithSupervisorPassword(password string) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.supervisorPassword = password
 	}
 }
 

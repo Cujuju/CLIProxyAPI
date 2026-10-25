@@ -50,6 +50,7 @@ type Handler struct {
 	authManager             *coreauth.Manager
 	tokenStore              coreauth.Store
 	localPassword           string
+	supervisorPassword      string
 	allowRemoteOverride     bool
 	envSecret               string
 	logDir                  string
@@ -271,6 +272,20 @@ func (h *Handler) reloadConfigAfterManagementSaveAsync(ctx context.Context, snap
 // SetLocalPassword configures the runtime-local password accepted for localhost requests.
 func (h *Handler) SetLocalPassword(password string) { h.localPassword = password }
 
+// MinSupervisorPasswordLength is the shortest accepted supervisor password: 32 random characters
+// make guessing infeasible, which is what lets it skip the failed-attempt ban.
+const MinSupervisorPasswordLength = 32
+
+// SetSupervisorPassword configures the desktop supervisor's per-launch password for localhost requests.
+func (h *Handler) SetSupervisorPassword(password string) { h.supervisorPassword = password }
+
+// isSupervisor reports a loopback request carrying the supervisor password. It is checked before the IP ban:
+// every local client shares 127.0.0.1, so another process guessing keys must not lock the supervisor out.
+func (h *Handler) isSupervisor(localClient bool, provided string) bool {
+	sp := h.supervisorPassword
+	return localClient && sp != "" && provided != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(sp)) == 1
+}
+
 // SetLogDirectory updates the directory where main.log should be looked up.
 func (h *Handler) SetLogDirectory(dir string) {
 	if dir == "" {
@@ -339,6 +354,9 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 	if h == nil {
 		return false, http.StatusForbidden, "remote management disabled"
 	}
+	if h.isSupervisor(localClient, provided) {
+		return true, 0, ""
+	}
 
 	h.mu.Lock()
 	cfg := h.cfg
@@ -400,7 +418,8 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 		h.attemptsMu.Unlock()
 	}
 
-	if secretHash == "" && envSecret == "" {
+	localKeySet := localClient && (h.localPassword != "" || h.supervisorPassword != "")
+	if secretHash == "" && envSecret == "" && !localKeySet {
 		return false, http.StatusForbidden, "remote management key not set"
 	}
 

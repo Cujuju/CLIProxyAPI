@@ -97,6 +97,8 @@ type Server struct {
 	envManagementSecret bool
 
 	localPassword string
+	// supervisorPassword is the desktop supervisor's per-launch management password.
+	supervisorPassword string
 
 	keepAliveEnabled   bool
 	keepAliveTimeout   time.Duration
@@ -231,6 +233,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		s.mgmt.SetPostAuthPersistHook(optionState.postAuthPersistHook)
 	}
 	s.localPassword = optionState.localPassword
+	if optionState.supervisorPassword != "" {
+		s.mgmt.SetSupervisorPassword(optionState.supervisorPassword)
+	}
+	s.supervisorPassword = optionState.supervisorPassword
 
 	// Home heartbeat gate: when home is enabled, block all endpoints with 503 until the
 	// subscribe-config heartbeat connection is healthy.
@@ -247,7 +253,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	// Register management routes when configuration or environment secrets are available,
 	// or when a local management password is provided (e.g. TUI mode).
-	hasManagementSecret := cfg.RemoteManagement.SecretKey != "" || envManagementSecret || s.localPassword != ""
+	hasManagementSecret := cfg.RemoteManagement.SecretKey != "" || envManagementSecret || s.hasRuntimeManagementPassword()
 	s.managementRoutesEnabled.Store(hasManagementSecret)
 	redisqueue.SetEnabled(hasManagementSecret || (cfg != nil && cfg.Home.Enabled))
 	if hasManagementSecret {
@@ -267,6 +273,11 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 
 	return s
+}
+
+// hasRuntimeManagementPassword reports a management password that lives outside config, so config reloads keep routes enabled.
+func (s *Server) hasRuntimeManagementPassword() bool {
+	return s.localPassword != "" || s.supervisorPassword != ""
 }
 
 func (s *Server) getConfig() *config.Config {
