@@ -48,6 +48,7 @@ var claudeOAuthInspectHeaderOrder = []string{
 var claudeOAuthInspectTargets = []string{
 	"/api/oauth/profile",
 	"/api/oauth/claude_cli/roles",
+	"/api/oauth/usage",
 }
 
 func claudeOAuthRequestHeaderOrder(method, requestTarget string) []string {

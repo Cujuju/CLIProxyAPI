@@ -12,6 +12,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/lifecycle"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
@@ -44,6 +45,8 @@ func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPass
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	ctxSignal, cancelShutdown := lifecycle.WithShutdown(ctxSignal)
+	defer cancelShutdown()
 
 	runCtx := ctxSignal
 	if localPassword != "" {
@@ -86,7 +89,7 @@ func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string,
 		builder = builder.WithServerOptions(serverOptions...)
 	}
 
-	ctx, cancelFn := context.WithCancel(context.Background())
+	ctx, cancelFn := lifecycle.WithShutdown(context.Background())
 	doneCh := make(chan struct{})
 
 	service, err := builder.Build()
