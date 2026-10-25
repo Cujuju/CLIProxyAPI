@@ -1527,6 +1527,8 @@ type UsageRecord struct {
 	RequestID string
 	// TraceID identifies the parent inbound HTTP request when available (8-character hex).
 	TraceID string
+	// SelectionID matches SchedulerPickRequest.Options.Metadata["selection_id"] of the pick that produced it.
+	SelectionID string
 	// Provider identifies the upstream provider.
 	Provider string
 	// BaseURL is the upstream base URL configured for the request/credential when available.

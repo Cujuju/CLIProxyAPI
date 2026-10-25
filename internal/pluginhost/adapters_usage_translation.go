@@ -186,6 +186,7 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 	plugin.HandleUsage(ctx, pluginapi.UsageRecord{
 		RequestID:            requestID,
 		TraceID:              traceID,
+		SelectionID:          record.SelectionID,
 		Provider:             record.Provider,
 		BaseURL:              record.BaseURL,
 		ExecutorType:         record.ExecutorType,

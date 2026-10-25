@@ -41,8 +41,11 @@ type Record struct {
 	AccessProvider  string
 	SessionID       string
 	ParentSessionID string
-	AuthID          string
-	AuthIndex       string
+	// SelectionID identifies the credential selection that produced this record. Attempts within one
+	// selection share it; every new selection, including an outer retry of the same credential, gets a new one.
+	SelectionID string
+	AuthID      string
+	AuthIndex   string
 	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
 	AccessTokenSHA256 string
 	AuthType          string
@@ -103,6 +106,7 @@ type generateContextKey struct{}
 type streamContextKey struct{}
 type executionRequestIDContextKey struct{}
 type executionTraceIDContextKey struct{}
+type selectionIDContextKey struct{}
 type apiKeyContextKey struct{}
 type accessProviderContextKey struct{}
 type isNativeKeyContextKey struct{}
@@ -124,6 +128,23 @@ func ExecutionRequestIDFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// WithSelectionID attaches the current credential selection ID to the context.
+func WithSelectionID(ctx context.Context, selectionID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, selectionIDContextKey{}, strings.TrimSpace(selectionID))
+}
+
+// SelectionIDFromContext retrieves the credential selection ID from the context.
+func SelectionIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(selectionIDContextKey{}).(string)
+	return id
 }
 
 // WithTraceID attaches the parent inbound HTTP request ID to the context.
@@ -510,6 +531,9 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 		} else {
 			record.RequestID = uuid.NewString()
 		}
+	}
+	if strings.TrimSpace(record.SelectionID) == "" {
+		record.SelectionID = SelectionIDFromContext(ctx)
 	}
 	if strings.TrimSpace(record.TraceID) == "" {
 		if trID := TraceIDFromContext(ctx); trID != "" {

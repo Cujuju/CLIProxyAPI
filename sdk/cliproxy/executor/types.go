@@ -11,6 +11,10 @@ import (
 // RequestedModelMetadataKey stores the client-requested model name in Options.Metadata.
 const RequestedModelMetadataKey = "requested_model"
 
+// SelectionIDMetadataKey carries the ID of the credential selection a scheduler plugin is asked to make.
+// The usage records of that selection carry the same ID.
+const SelectionIDMetadataKey = "selection_id"
+
 // RequestPathMetadataKey stores the inbound HTTP request path (e.g. "/v1/images/generations") in Options.Metadata.
 // It is optional and may be absent for non-HTTP executions.
 const RequestPathMetadataKey = "request_path"

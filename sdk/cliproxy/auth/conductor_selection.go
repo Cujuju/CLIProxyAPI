@@ -997,11 +997,13 @@ func (m *Manager) pickViaPluginScheduler(ctx context.Context, scheduler PluginSc
 		Options:    schedulerOptions(opts),
 		Candidates: schedulerAuthCandidates(candidates),
 	}
+	req.Options.Metadata = withSelectionIDMetadata(ctx, req.Options.Metadata)
 	resp, handled, errPick := scheduler.PickAuth(ctx, req)
 	if errPick != nil {
 		return nil, true, errPick
 	}
 	if !handled || !resp.Handled {
+		selectionTicketFrom(ctx).reissue()
 		return nil, false, nil
 	}
 	if resp.Reject {
@@ -1019,6 +1021,7 @@ func (m *Manager) pickViaPluginScheduler(ctx context.Context, scheduler PluginSc
 		return selected, true, nil
 	}
 
+	selectionTicketFrom(ctx).reissue()
 	strategy, okStrategy := builtinSchedulerStrategy(resp.DelegateBuiltin)
 	if !okStrategy {
 		return nil, false, nil

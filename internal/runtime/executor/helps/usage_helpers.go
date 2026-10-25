@@ -28,6 +28,7 @@ import (
 type UsageReporter struct {
 	requestID            string
 	traceID              string
+	selectionID          string
 	provider             string
 	baseURL              string
 	executorType         string
@@ -126,6 +127,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 	reporter := &UsageReporter{
 		requestID:       uuid.NewString(),
 		traceID:         traceID,
+		selectionID:     usage.SelectionIDFromContext(ctx),
 		provider:        provider,
 		baseURL:         baseURL,
 		model:           model,
@@ -663,6 +665,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	return usage.Record{
 		RequestID:            r.requestID,
 		TraceID:              r.traceID,
+		SelectionID:          r.selectionID,
 		Provider:             r.provider,
 		BaseURL:              r.baseURL,
 		ExecutorType:         r.executorType,
