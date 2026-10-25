@@ -36,6 +36,7 @@ func TestDesktopRoutesRequireManagementKey(t *testing.T) {
 		{http.MethodGet, "/v8/management/usage/windows"},
 		{http.MethodPost, "/v8/management/usage/refresh"},
 		{http.MethodPost, "/v8/management/server/shutdown"},
+		{http.MethodGet, "/v8/management/usage/events"},
 	} {
 		if !routes[route.method+" "+route.path] {
 			t.Fatalf("missing route %s %s", route.method, route.path)

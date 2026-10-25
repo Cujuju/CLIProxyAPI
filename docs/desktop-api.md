@@ -119,6 +119,22 @@ while with many accounts). Returns the same shape as `GET /usage/windows`, plus
 - `404` unknown `auth_index`.
 - `400` the credential is not an enabled Claude OAuth credential, or the body is invalid.
 
+## GET /v8/management/usage/events
+
+Server-sent events. `event: ready` on connect, then one `event: request` per
+upstream attempt (successful or failed):
+
+```json
+{"at":"…","request_id":"…","selection_id":"…","provider":"claude","model":"…",
+ "auth_id":"…","auth_index":"3f2a9c","stream":true,"failed":false,"status_code":0,
+ "latency_ms":5400,"ttft_ms":900,"input_tokens":1200,"output_tokens":300,"cached_tokens":0}
+```
+
+Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
+one credential selection share `selection_id`. A reader too slow for a burst
+gets `event: resync` and should reload `GET /usage/windows`. Comment lines
+(`: keep-alive`) arrive every 15s.
+
 ## Adding a Claude account (OAuth)
 
 1. `GET /v8/management/oauth/auth-url?provider=claude&is_webui=true` returns
