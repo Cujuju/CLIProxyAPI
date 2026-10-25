@@ -364,4 +364,8 @@ type StreamingConfig struct {
 	// SendKeepAliveBeforeFT controls whether SSE heartbeats are sent before the first token arrives
 	// when KeepAliveSeconds > 0. Default is false.
 	SendKeepAliveBeforeFT bool `yaml:"send-keepalive-before-ft,omitempty" json:"send-keepalive-before-ft,omitempty"`
+
+	// FirstByteTimeoutSeconds fails a stream attempt, and tries the next credential, when the upstream
+	// sends no data within this many seconds. It is lifted at the first payload. <= 0 disables (default).
+	FirstByteTimeoutSeconds int `yaml:"first-byte-timeout-seconds,omitempty" json:"first-byte-timeout-seconds,omitempty"`
 }

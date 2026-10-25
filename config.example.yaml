@@ -252,6 +252,7 @@ requests:
   #   keepalive-seconds: 15         # Default: 0 (disabled). <= 0 disables keep-alives.
   #   bootstrap-retries: 1          # Default: 0 (disabled). Retries before first byte is sent.
   #   send-keepalive-before-ft: false # Default: false. When true and keepalive-seconds > 0, send SSE heartbeats before the first token.
+  #   first-byte-timeout-seconds: 90 # Default: 0 (disabled). Fails over to the next credential when an upstream accepts a stream but sends nothing in time.
 
   # Optional payload configuration
   # payload:
