@@ -280,6 +280,19 @@ func verifyAccountedHomeConcurrencyIdentity(tuple homeConcurrencyTuple, auth *Au
 
 // SafeResponseHeaders returns trusted response headers only for concrete
 // retry/cooldown errors.
+// safeErrorHeaderNames are the SafeResponseHeaders entries handlers copy to clients.
+var safeErrorHeaderNames = []string{"Retry-After", HeaderShouldRetry}
+
+// CopySafeErrorHeaders adds err's client-safe response headers to dst.
+func CopySafeErrorHeaders(dst http.Header, err error) {
+	safe := SafeResponseHeaders(err)
+	for _, name := range safeErrorHeaderNames {
+		for _, value := range safe.Values(name) {
+			dst.Add(name, value)
+		}
+	}
+}
+
 func SafeResponseHeaders(err error) http.Header {
 	var busy *HomeConcurrencyBusyError
 	if errors.As(err, &busy) && busy != nil {

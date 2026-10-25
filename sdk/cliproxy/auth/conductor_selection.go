@@ -2272,6 +2272,11 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 }
 
 func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {
+	auth, executor, provider, err := m.pickNextMixedCandidate(ctx, providers, model, opts, tried)
+	return auth, executor, provider, m.classifyQuotaExhaustion(err, providers, model)
+}
+
+func (m *Manager) pickNextMixedCandidate(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {
 	opts.EnsureMetadata()
 	if m.HomeEnabled() {
 		return m.pickNextViaHome(ctx, model, opts, tried)

@@ -85,6 +85,8 @@ type modelCooldownError struct {
 	resetIn  time.Duration
 	provider string
 	cause    error
+	// usageLimitResetsAt is set when every eligible credential is out of quota; see quota_exhaustion.go.
+	usageLimitResetsAt time.Time
 }
 
 // NewModelCooldownError creates an error representing model-level cooldown.
@@ -110,6 +112,19 @@ func newModelCooldownErrorWithCause(model, provider string, resetIn time.Duratio
 
 func (e *modelCooldownError) IsModelCooldown() bool {
 	return true
+}
+
+// IsUsageLimit reports a final usage limit: clients should stop until UsageLimitResetsAt.
+func (e *modelCooldownError) IsUsageLimit() bool {
+	return e != nil && !e.usageLimitResetsAt.IsZero()
+}
+
+// UsageLimitResetsAt is when the first credential gets allowance back; zero unless IsUsageLimit.
+func (e *modelCooldownError) UsageLimitResetsAt() time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	return e.usageLimitResetsAt
 }
 
 func (e *modelCooldownError) Unwrap() error {
@@ -147,6 +162,13 @@ func (e *modelCooldownError) Error() string {
 	}
 	if e.provider != "" {
 		errorBody["provider"] = e.provider
+	}
+	if e.IsUsageLimit() {
+		message = fmt.Sprintf("Usage limit reached for every credential of model %s; resets at %s", modelName, e.usageLimitResetsAt.UTC().Format(time.RFC3339))
+		errorBody["type"] = usageLimitErrorType
+		errorBody["message"] = message
+		errorBody["resets_at"] = e.usageLimitResetsAt.Unix()
+		errorBody["retryable"] = false
 	}
 	if e.cause != nil {
 		if causeText := ExtractUpstreamErrorSummary(e.cause.Error()); causeText != "" {
@@ -356,6 +378,11 @@ func (e *modelCooldownError) Headers() http.Header {
 	resetSeconds := int(math.Ceil(e.resetIn.Seconds()))
 	if resetSeconds < 0 {
 		resetSeconds = 0
+	}
+	if e.IsUsageLimit() {
+		// A multi-hour Retry-After makes clients sleep; a final limit tells them to stop.
+		headers.Set(HeaderShouldRetry, "false")
+		return headers
 	}
 	headers.Set("Retry-After", strconv.Itoa(resetSeconds))
 	return headers
