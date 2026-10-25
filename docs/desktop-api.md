@@ -119,6 +119,21 @@ while with many accounts). Returns the same shape as `GET /usage/windows`, plus
 - `404` unknown `auth_index`.
 - `400` the credential is not an enabled Claude OAuth credential, or the body is invalid.
 
+## GET / PUT /v8/management/routing/preferred-auth
+
+The "use this account" override. `PUT {"provider":"claude","auth_index":"3f2a9c"}`
+makes new requests for that provider use the credential while it is available,
+ahead of the routing strategy and session affinity. When it is cooling down,
+disabled or already tried in the request, routing falls back to automatic.
+`auth_index: ""` clears it. Both methods return `{"preferred":{"claude":"3f2a9c"}}`.
+The preference lives in memory only; a supervisor re-applies it after a restart.
+`GET /usage/windows` marks it with `"preferred": true` and moves `next_pick` to
+it while it is usable. Sessions bound during the override keep their binding
+until session affinity expires.
+
+- `400` missing provider, or the credential belongs to another provider.
+- `404` unknown `auth_index`.
+
 ## GET /v8/management/usage/events
 
 Server-sent events. `event: ready` on connect, then one `event: request` per

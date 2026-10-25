@@ -180,6 +180,8 @@ type Manager struct {
 	selectorMu                sync.Mutex
 	configCooldownMu          sync.Mutex
 	syncSchedulerMu           sync.Mutex
+	// preferred holds per-provider credential preferences set by the desktop supervisor.
+	preferred preferredAuths
 	// executionSeq stamps upstream dispatches with a monotonic sequence used
 	// to reject cooldown clears from executions dispatched before the cooldown.
 	executionSeq       atomic.Uint64

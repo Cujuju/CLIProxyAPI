@@ -125,8 +125,13 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		provider := strings.ToLower(strings.TrimSpace(auth.Provider))
 		byProvider[provider] = append(byProvider[provider], auth)
 	}
+	preferred := h.authManager.PreferredAuths()
 	nextPick := map[string]string{}
 	for provider, group := range byProvider {
+		if pick := preferredNextPick(preferred[provider], group, now); pick != "" {
+			nextPick[provider] = pick
+			continue
+		}
 		nextPick[provider] = coreauth.PreviewNextPick(strategy, group, now)
 	}
 	credentials := make([]gin.H, 0, len(auths))
@@ -151,6 +156,7 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		}
 		pick := nextPick[strings.ToLower(strings.TrimSpace(auth.Provider))]
 		credential["next_pick"] = pick != "" && pick == auth.ID
+		credential["preferred"] = preferred[strings.ToLower(strings.TrimSpace(auth.Provider))] == auth.ID
 		credential["windows"] = desktopWindows(auth, now)
 		credentials = append(credentials, credential)
 	}
