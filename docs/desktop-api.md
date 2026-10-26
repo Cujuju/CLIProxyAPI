@@ -165,6 +165,24 @@ while with many accounts). Returns the same shape as `GET /usage/windows`, plus
 - `404` unknown `auth_index`.
 - `400` the credential is not an enabled Claude OAuth credential, or the body is invalid.
 
+## POST /v8/management/usage/reset-credit
+
+Spends one of a Codex account's rate-limit reset credits (ChatGPT's
+`POST /backend-api/wham/rate-limit-reset-credits/consume`, the call Codex's
+`/usage` panel makes). Body: `{"auth_index": "<auth_index>"}`; enabled Codex
+logins only (400 otherwise, 404 for an unknown index, 502 when ChatGPT fails).
+Each call sends a fresh `redeem_request_id`, so it spends at most one credit.
+
+```json
+{"code": "reset", "windows_reset": 2, "usage": { "...": "GET /usage/windows payload" }}
+```
+
+`code` is ChatGPT's outcome: `reset` (spent; the reached limits are cleared),
+`nothing_to_reset` (no limit reached, nothing spent), `no_credit`, or
+`already_redeemed`. On `reset` the credential's cooldown is lifted so routing
+picks it again. The credit count is looked up again; a failed lookup adds
+`refresh_error`.
+
 ## GET / PUT /v8/management/routing/preferred-auth
 
 The "use this account" override. `PUT {"provider":"claude","auth_index":"3f2a9c"}`

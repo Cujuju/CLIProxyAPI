@@ -228,3 +228,21 @@ func TestDesktopResetCreditsReportsStoredLookup(t *testing.T) {
 		t.Fatal("reset credits without a lookup")
 	}
 }
+
+func TestUseResetCreditValidation(t *testing.T) {
+	h := newDesktopUsageHandler(t, "soonest-reset")
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{}`, http.StatusBadRequest},
+		{`{"auth_index":"missing"}`, http.StatusNotFound},
+		{`{"auth_index":"idx-soon"}`, http.StatusBadRequest},
+		// A Codex credential without an access token is not an eligible login.
+		{`{"auth_index":"idx-codex"}`, http.StatusBadRequest},
+	} {
+		if rec := serveDesktop(t, h.UseResetCredit, http.MethodPost, tc.body, "127.0.0.1:1"); rec.Code != tc.want {
+			t.Fatalf("%s status = %d, want %d", tc.body, rec.Code, tc.want)
+		}
+	}
+}

@@ -33,6 +33,7 @@ func (s *Server) registerManagementV8Routes() {
 	v8.DELETE("/server/lockouts", s.mgmt.DeleteLockouts)
 	v8.GET("/usage/windows", s.mgmt.GetUsageWindows)
 	v8.POST("/usage/refresh", s.mgmt.RefreshUsageWindows)
+	v8.POST("/usage/reset-credit", s.mgmt.UseResetCredit)
 	v8.GET("/usage/events", s.mgmt.DesktopEvents)
 	v8.GET("/routing/preferred-auth", s.mgmt.GetPreferredAuths)
 	v8.PUT("/routing/preferred-auth", s.mgmt.PutPreferredAuth)

@@ -35,6 +35,7 @@ func TestDesktopRoutesRequireManagementKey(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/v8/management/usage/windows"},
 		{http.MethodPost, "/v8/management/usage/refresh"},
+		{http.MethodPost, "/v8/management/usage/reset-credit"},
 		{http.MethodPost, "/v8/management/server/shutdown"},
 		{http.MethodGet, "/v8/management/usage/events"},
 	} {
@@ -49,6 +50,10 @@ func TestDesktopRoutesRequireManagementKey(t *testing.T) {
 			t.Fatalf("%s %s without key: status=%d", route.method, route.path, recorder.Code)
 		}
 	}
+
+	// Each keyless probe is a failed attempt; five lock the address out, so clear them first.
+	cleared, _ := gin.CreateTestContext(httptest.NewRecorder())
+	h.DeleteLockouts(cleared)
 
 	req := httptest.NewRequest(http.MethodGet, "/v8/management/usage/windows", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
