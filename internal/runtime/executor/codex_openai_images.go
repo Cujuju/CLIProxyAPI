@@ -62,12 +62,23 @@ func isCodexOpenAIImageRequest(opts cliproxyexecutor.Options) bool {
 	return codexIsImagesEndpointPath(helps.PayloadRequestPath(opts))
 }
 
+// codexIsImagesEndpointPath matches the Images API wherever it is mounted: /v1/images/* and
+// Codex's own /backend-api/codex/images/*.
 func codexIsImagesEndpointPath(path string) bool {
+	return codexImagesEndpoint(path) != ""
+}
+
+// codexImagesEndpoint returns the upstream images path for a request path, or "" for other endpoints.
+func codexImagesEndpoint(path string) string {
 	path = strings.TrimSpace(path)
-	if path == codexImagesGenerationsPath || path == codexImagesEditsPath {
-		return true
+	switch {
+	case strings.HasSuffix(path, codexDirectImagesGenerations):
+		return codexDirectImagesGenerations
+	case strings.HasSuffix(path, codexDirectImagesEdit):
+		return codexDirectImagesEdit
+	default:
+		return ""
 	}
-	return strings.HasSuffix(path, codexImagesGenerationsPath) || strings.HasSuffix(path, codexImagesEditsPath)
 }
 
 func (e *CodexExecutor) resolveGPTImage2BaseModel() string {
@@ -503,14 +514,7 @@ func codexDirectOpenAIImageEndpoint(req cliproxyexecutor.Request, opts cliproxye
 	if codexDirectOpenAIImageRouteModel(req, opts) == "" {
 		return ""
 	}
-	path := helps.PayloadRequestPath(opts)
-	if strings.HasSuffix(strings.TrimSpace(path), codexImagesGenerationsPath) {
-		return codexDirectImagesGenerations
-	}
-	if strings.HasSuffix(strings.TrimSpace(path), codexImagesEditsPath) {
-		return codexDirectImagesEdit
-	}
-	return ""
+	return codexImagesEndpoint(helps.PayloadRequestPath(opts))
 }
 
 func (e *CodexExecutor) prepareDirectOpenAIImageBody(auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool) ([]byte, string, string, error) {
@@ -527,8 +531,7 @@ func (e *CodexExecutor) prepareDirectOpenAIImageBody(auth *cliproxyauth.Auth, re
 
 func codexPrepareDirectOpenAIImagePayload(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, model string, stream bool) ([]byte, string, error) {
 	contentType := opts.Headers.Get("Content-Type")
-	path := strings.TrimSpace(helps.PayloadRequestPath(opts))
-	if strings.HasSuffix(path, codexImagesEditsPath) {
+	if codexImagesEndpoint(helps.PayloadRequestPath(opts)) == codexDirectImagesEdit {
 		return codexPrepareDirectOpenAIImageEditPayload(req.Payload, model, contentType, stream)
 	}
 	return prepareOpenAICompatImagesPayload(req.Payload, model, contentType, stream)
@@ -774,10 +777,11 @@ func recordCodexOpenAIImageRequest(ctx context.Context, cfg *config.Config, prov
 
 func codexPrepareOpenAIImageRequest(req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (codexOpenAIImagePreparedRequest, error) {
 	path := helps.PayloadRequestPath(opts)
-	if strings.HasSuffix(path, codexImagesGenerationsPath) {
+	switch codexImagesEndpoint(path) {
+	case codexDirectImagesGenerations:
 		return codexPrepareOpenAIImageGenerationJSON(req.Payload, req.Model)
-	}
-	if !strings.HasSuffix(path, codexImagesEditsPath) {
+	case codexDirectImagesEdit:
+	default:
 		return codexOpenAIImagePreparedRequest{}, fmt.Errorf("unsupported OpenAI image endpoint path %q", path)
 	}
 

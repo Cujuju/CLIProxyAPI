@@ -124,6 +124,9 @@ func (s *Server) setupRoutes() {
 		codexDirect.POST("/responses", openaiResponsesHandlers.Responses)
 		codexDirect.POST("/responses/compact", openaiResponsesHandlers.Compact)
 		codexDirect.POST("/alpha/search", s.codexAlphaSearch)
+		// Codex's image tool posts here when its OpenAI provider points at the proxy.
+		codexDirect.POST("/images/generations", openaiHandlers.ImagesGenerations)
+		codexDirect.POST("/images/edits", openaiHandlers.ImagesEdits)
 	}
 
 	// Gemini compatible API routes

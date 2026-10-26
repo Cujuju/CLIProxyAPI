@@ -31,6 +31,17 @@ func TestCodexBackendRouteNeedsAClientKey(t *testing.T) {
 	}
 }
 
+func TestCodexBackendImageRoutesReachTheImagesAPI(t *testing.T) {
+	s := newTestServer(t)
+	for _, path := range []string{"/backend-api/codex/images/generations", "/backend-api/codex/images/edits"} {
+		// "{}" has no prompt: the Images API rejects it, which proves the route reached it.
+		rec := serveBackendAPI(s, http.MethodPost, path, "test-key")
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Invalid request") {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestCodexBackendRouteLeavesModelCallsAlone(t *testing.T) {
 	s := newTestServer(t)
 	rec := serveBackendAPI(s, http.MethodPost, "/backend-api/codex/responses", "test-key")
