@@ -1,11 +1,13 @@
 package management
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -84,6 +86,25 @@ func TestCodexBackend_RejectedPoolTokenIsAGatewayError(t *testing.T) {
 	// A 401 would make Codex refresh a login that has no real refresh token.
 	if rec := serveCodexBackend(h, "/backend-api/wham/usage", http.Header{}); rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestCodexBackend_FailedForwardStatus(t *testing.T) {
+	// Port 1 refuses connections: an upstream failure is a gateway error.
+	h := newCodexBackendHandler(t, "http://127.0.0.1:1", codexPoolAuth("codex-a", "pool-token", "acct-1"))
+	if rec := serveCodexBackend(h, "/backend-api/wham/usage", http.Header{}); rec.Code != http.StatusBadGateway {
+		t.Fatalf("unreachable upstream: status = %d, want 502", rec.Code)
+	}
+
+	// A client that hung up is not a gateway failure (Codex cancels calls as it exits).
+	engine := gin.New()
+	engine.GET("/backend-api/*path", h.CodexBackend)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(closeNotifyRecorder{rec}, httptest.NewRequest(http.MethodGet, "/backend-api/wham/usage", nil).WithContext(ctx))
+	if rec.Code != clienterror.StatusClientClosedRequest {
+		t.Fatalf("client gone: status = %d, want %d", rec.Code, clienterror.StatusClientClosedRequest)
 	}
 }
 

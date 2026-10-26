@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -77,8 +79,19 @@ func (h *Handler) CodexBackend(c *gin.Context) {
 			}
 			return nil
 		},
+		ErrorHandler: codexBackendError,
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+// codexBackendError answers a failed forward. A client that hung up gets the client-closed status, not a gateway error.
+func codexBackendError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil && clienterror.IsClientCancellation(0, err) {
+		w.WriteHeader(clienterror.StatusClientClosedRequest)
+		return
+	}
+	log.WithError(err).WithField("path", r.URL.Path).Warn("codex backend: chatgpt.com request failed")
+	w.WriteHeader(http.StatusBadGateway)
 }
 
 // codexAccountAuth picks the ChatGPT-login Codex credential new requests route to,
