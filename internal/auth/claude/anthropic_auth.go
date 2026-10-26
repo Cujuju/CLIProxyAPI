@@ -165,6 +165,10 @@ type OAuthProfile struct {
 	Organization struct {
 		UUID string `json:"uuid"`
 		Name string `json:"name"`
+		// OrganizationType is the subscription family, e.g. "claude_max".
+		OrganizationType string `json:"organization_type"`
+		// RateLimitTier names the plan's limits, e.g. "default_claude_max_5x".
+		RateLimitTier string `json:"rate_limit_tier"`
 	} `json:"organization"`
 }
 

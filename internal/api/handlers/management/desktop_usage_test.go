@@ -27,7 +27,11 @@ type desktopUsageResponse struct {
 		ObservedAt    *time.Time `json:"observed_at"`
 		CooldownUntil *time.Time `json:"cooldown_until"`
 		Weight        int64      `json:"weight"`
-		Windows       []struct {
+		Plan          *struct {
+			Label      string   `json:"label"`
+			Multiplier *float64 `json:"multiplier"`
+		} `json:"plan"`
+		Windows []struct {
 			Key         string     `json:"key"`
 			Label       string     `json:"label"`
 			UsedPercent *float64   `json:"used_percent"`
@@ -61,7 +65,8 @@ func newDesktopUsageHandler(t *testing.T, strategy string) *Handler {
 	manager.SetConfig(cfg)
 	for _, auth := range []*coreauth.Auth{
 		{ID: "late", Index: "idx-late", Provider: "claude", Attributes: map[string]string{"runtime_only": "true", "note": "Work", "weight": "3"},
-			Quota: coreauth.QuotaState{ObservedAt: now, Signals: claudeUsageSignals(now.Add(72*time.Hour), now.Add(3*time.Hour))}},
+			Metadata: map[string]any{"rate_limit_tier": "default_claude_max_5x", "organization_type": "claude_max"},
+			Quota:    coreauth.QuotaState{ObservedAt: now, Signals: claudeUsageSignals(now.Add(72*time.Hour), now.Add(3*time.Hour))}},
 		{ID: "soon", Index: "idx-soon", Provider: "claude", Attributes: map[string]string{"runtime_only": "true"},
 			Quota: coreauth.QuotaState{ObservedAt: now, Signals: claudeUsageSignals(now.Add(24*time.Hour), now.Add(2*time.Hour))}},
 		{ID: "codex-a", Index: "idx-codex", Provider: "codex", Attributes: map[string]string{"runtime_only": "true"}},
@@ -110,6 +115,9 @@ func TestGetUsageWindowsShapeAndNextPick(t *testing.T) {
 		}
 		switch credential.ID {
 		case "late":
+			if credential.Plan == nil || credential.Plan.Label != "Max 5x" || credential.Plan.Multiplier == nil || *credential.Plan.Multiplier != 5 {
+				t.Fatalf("plan = %+v", credential.Plan)
+			}
 			if credential.Note != "Work" || credential.Weight != 3 {
 				t.Fatalf("note/weight = %q/%d", credential.Note, credential.Weight)
 			}
@@ -127,7 +135,7 @@ func TestGetUsageWindowsShapeAndNextPick(t *testing.T) {
 			if fiveHour.Duration == nil || *fiveHour.Duration != 5*3600 || weekly.Duration == nil || *weekly.Duration != 7*24*3600 || fiveHour.Scoped || weekly.Scoped {
 				t.Fatalf("duration/scope = %+v", credential.Windows)
 			}
-			if credential.Weight != 1 {
+			if credential.Weight != 1 || credential.Plan != nil {
 				t.Fatalf("default weight = %d", credential.Weight)
 			}
 			if fiveHour.Cadence == nil || *fiveHour.Cadence != "on_use" || weekly.Cadence == nil || *weekly.Cadence != "fixed" {

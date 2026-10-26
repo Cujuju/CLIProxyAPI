@@ -163,11 +163,25 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		pick := nextPick[strings.ToLower(strings.TrimSpace(auth.Provider))]
 		credential["next_pick"] = pick != "" && pick == auth.ID
 		credential["weight"] = coreauth.CredentialWeight(auth)
+		credential["plan"] = desktopPlan(auth)
 		credential["preferred"] = preferred[strings.ToLower(strings.TrimSpace(auth.Provider))] == auth.ID
 		credential["windows"] = desktopWindows(auth, now)
 		credentials = append(credentials, credential)
 	}
 	return gin.H{"strategy": strategy, "credentials": credentials}
+}
+
+// desktopPlan is the credential's subscription plan, or nil before the first lookup.
+func desktopPlan(auth *coreauth.Auth) gin.H {
+	plan, ok := claudeusage.PlanOf(auth)
+	if !ok {
+		return nil
+	}
+	var multiplier *float64
+	if plan.Multiplier > 0 {
+		multiplier = &plan.Multiplier
+	}
+	return gin.H{"tier": plan.Tier, "type": plan.Type, "label": plan.Label, "multiplier": multiplier}
 }
 
 func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {
