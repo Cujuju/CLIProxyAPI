@@ -24,18 +24,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type attemptInfo struct {
-	count        int
-	blockedUntil time.Time
-	lastActivity time.Time // track last activity for cleanup
-}
-
-// attemptCleanupInterval controls how often stale IP entries are purged
-const attemptCleanupInterval = 1 * time.Hour
-
-// attemptMaxIdleTime controls how long an IP can be idle before cleanup
-const attemptMaxIdleTime = 2 * time.Hour
-
 // Handler aggregates config reference, persistence path and helpers.
 type Handler struct {
 	cfg                     *config.Config
@@ -349,9 +337,6 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 // AuthenticateManagementKey verifies the provided management key for the given client.
 // It mirrors the behaviour of Middleware() so non-HTTP callers can reuse the same logic.
 func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, provided string) (bool, int, string) {
-	const maxFailures = 5
-	const banDuration = 30 * time.Minute
-
 	if h == nil {
 		return false, http.StatusForbidden, "remote management disabled"
 	}
@@ -375,49 +360,16 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 	}
 	envSecret := h.envSecret
 
-	now := time.Now()
-	h.attemptsMu.Lock()
-	ai := h.failedAttempts[clientIP]
-	if ai != nil && !ai.blockedUntil.IsZero() {
-		if now.Before(ai.blockedUntil) {
-			remaining := ai.blockedUntil.Sub(now).Round(time.Second)
-			h.attemptsMu.Unlock()
-			return false, http.StatusForbidden, fmt.Sprintf("IP banned due to too many failed attempts. Try again in %s", remaining)
-		}
-		// Ban expired, reset state
-		ai.blockedUntil = time.Time{}
-		ai.count = 0
+	if remaining, locked := h.lockedFor(clientIP, time.Now()); locked {
+		return false, http.StatusForbidden, fmt.Sprintf("IP banned due to too many failed attempts. Try again in %s", remaining.Round(time.Second))
 	}
-	h.attemptsMu.Unlock()
 
 	if !localClient && !allowRemote {
 		return false, http.StatusForbidden, "remote management disabled"
 	}
 
-	fail := func() {
-		h.attemptsMu.Lock()
-		aip := h.failedAttempts[clientIP]
-		if aip == nil {
-			aip = &attemptInfo{}
-			h.failedAttempts[clientIP] = aip
-		}
-		aip.count++
-		aip.lastActivity = time.Now()
-		if aip.count >= maxFailures {
-			aip.blockedUntil = time.Now().Add(banDuration)
-			aip.count = 0
-		}
-		h.attemptsMu.Unlock()
-	}
-
-	reset := func() {
-		h.attemptsMu.Lock()
-		if ai := h.failedAttempts[clientIP]; ai != nil {
-			ai.count = 0
-			ai.blockedUntil = time.Time{}
-		}
-		h.attemptsMu.Unlock()
-	}
+	fail := func() { h.recordFailure(clientIP) }
+	reset := func() { h.clearFailures(clientIP) }
 
 	localKeySet := localClient && (h.localPassword != "" || h.supervisorPassword != "")
 	if secretHash == "" && envSecret == "" && !localKeySet {
@@ -444,6 +396,10 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 	}
 
 	if secretHash == "" || bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(provided)) != nil {
+		// A client key is a known credential in the wrong field, so it earns no lockout.
+		if h.isClientAPIKey(provided) {
+			return false, http.StatusUnauthorized, ClientKeyAsManagementKeyMessage
+		}
 		fail()
 		return false, http.StatusUnauthorized, "invalid management key"
 	}

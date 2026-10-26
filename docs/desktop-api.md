@@ -10,9 +10,27 @@ Recommended: start the proxy with `MANAGEMENT_SUPERVISOR_PASSWORD` set to a fres
 random value of at least 32 characters. The proxy reads it once, clears it from
 its own environment (plugins and child processes never see it), and accepts it
 only from loopback. It skips the failed-attempt IP ban: every local process
-shares 127.0.0.1, so another program sending 5 wrong keys would otherwise lock
-the supervisor out for 30 minutes. Wrong keys are still counted and banned as
+shares 127.0.0.1, so another program sending wrong keys would otherwise lock
+the supervisor out. Wrong keys are still counted and banned as
 usual. No key is written to `config.yaml`, so the proxy never rewrites one.
+
+## Failed management keys
+
+Wrong keys are counted per client IP. 5 failures lock that IP out of management
+for 5 minutes (`403`). After a lockout, 3 more failures lock it out for 30
+minutes, and every later lockout is 30 minutes. A correct key, or 2 hours
+without a request, returns the IP to the first step.
+
+A proxy client key (`access.api-keys`) sent as the management key gets `401`
+with `this is a client API key; management calls need the management key` and
+does not count: it is a setup mix-up, not a guess.
+
+- `GET /v8/management/server/lockouts`: IPs with failures or an active lockout:
+  `{"lockouts":[{"ip":"127.0.0.1","failures":2,"failures_allowed":3,"locked_until":"2026-10-26T19:30:00Z","lockouts":1}]}`.
+  `failures_allowed` is the total that earns the next lockout; `locked_until`
+  is `null` when not locked out.
+- `DELETE /v8/management/server/lockouts`: lifts every lockout and forgets all
+  failures. A locked-out IP can't call it; the supervisor password can.
 
 Alternatively, set a key in `config.yaml` (v8 layout):
 

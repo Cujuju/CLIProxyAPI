@@ -29,6 +29,8 @@ func (s *Server) registerManagementV8Routes() {
 
 	v8.GET("/server/latest-version", s.mgmt.GetLatestVersion)
 	v8.POST("/server/shutdown", s.mgmt.ShutdownServer)
+	v8.GET("/server/lockouts", s.mgmt.GetLockouts)
+	v8.DELETE("/server/lockouts", s.mgmt.DeleteLockouts)
 	v8.GET("/usage/windows", s.mgmt.GetUsageWindows)
 	v8.POST("/usage/refresh", s.mgmt.RefreshUsageWindows)
 	v8.GET("/usage/events", s.mgmt.DesktopEvents)
