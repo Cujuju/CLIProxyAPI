@@ -208,3 +208,30 @@ The caller authenticates with a client key (`access.api-keys`). Codex sends its
 no ChatGPT login of its own. A `401` from chatgpt.com is returned as `502`: it
 means the pooled credential failed, and Codex would otherwise try to refresh
 its own login.
+
+### Codex model, image and search calls (`/backend-api/codex/*`)
+
+With `openai_base_url = "http://<proxy>/backend-api/codex"`, Codex keeps its
+built-in OpenAI provider and sends its model calls here, authenticated with the
+same `auth.json` token. A custom `model_provider` would turn off the tools Codex
+offers only on that provider, such as image generation.
+
+| Route | Served by |
+|---|---|
+| `GET /responses` (websocket), `POST /responses`, `POST /responses/compact` | the Responses API, as `/v1/responses` |
+| `POST /alpha/search` | standalone web search |
+| `POST /images/generations`, `POST /images/edits` | the Images API, as `/v1/images/*` (`gpt-image-2` routes to Codex accounts) |
+
+Other `/backend-api/codex/*` paths (model list, analytics) fall through to the
+account forwarder above.
+
+A client that disconnects before chatgpt.com answers gets `499`, not `502`.
+
+Codex's apps MCP (`/backend-api/ps/mcp`) receives no credential: Codex sends its
+ChatGPT token to an apps MCP server only on chatgpt.com, so through the proxy
+those calls answer `401`. Codex's other features are unaffected.
+
+## Claude Code connectivity check
+
+`GET`/`HEAD /api/hello` answers `200 {"message":"hello"}` without a key, as
+api.anthropic.com does. Claude Code probes it at startup.
