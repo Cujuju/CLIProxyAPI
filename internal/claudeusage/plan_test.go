@@ -19,7 +19,8 @@ func TestPlanOfReadsTierMultiple(t *testing.T) {
 		{"default_claude_max_5x", "claude_max", "Max 5x", 5},
 		{"default_claude_max_20x", "claude_max", "Max 20x", 20},
 		{"default_claude_ai", "claude_pro", "Pro", 1},
-		{"", "claude_team", "claude_team", 0},
+		{"", "claude_team", "Team", 0},
+		{"default_claude_custom", "", "default_claude_custom", 0},
 	} {
 		auth := &coreauth.Auth{Metadata: map[string]any{planTierKey: tc.tier, planTypeKey: tc.planType}}
 		plan, ok := PlanOf(auth)

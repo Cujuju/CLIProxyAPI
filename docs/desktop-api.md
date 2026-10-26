@@ -103,10 +103,12 @@ time, 2s apart; a failing credential is retried after 15 minutes.
   `note` and `priority` are omitted when unset.
 - `cooldown_until` is when a benched credential becomes eligible again, else `null`.
 - `weight` is the credential's `weighted-round-robin` weight (default 1; 0 excludes it).
-- `plan` is the Claude subscription from the account's OAuth profile, looked up
-  every 6 hours and stored on the credential; `null` before the first lookup and
-  for other providers. `multiplier` is 5-hour session usage relative to Pro, read
-  from the tier (`..._5x` = 5) or 1 for Pro; `null` when unknown (Team, Enterprise).
+- `plan` is the subscription. Claude's comes from the account's OAuth profile,
+  looked up every 6 hours and stored on the credential; Codex's is the login
+  token's `plan_type` (`{"tier": "plus", "type": "plus", "label": "Plus"}`).
+  `null` before the first lookup and for other providers. `multiplier` is 5-hour
+  session usage relative to Claude Pro, read from the tier (`..._5x` = 5) or 1 for
+  Pro; `null` when unpublished (Team, Enterprise, every Codex plan).
 - `observed_at` is the time of the latest usage snapshot, else `null`.
 - `next_pick` marks the credential the strategy would choose for a new
   conversation within its provider. Rotating strategies (`round-robin`) mark none.

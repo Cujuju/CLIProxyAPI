@@ -171,17 +171,22 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 	return gin.H{"strategy": strategy, "credentials": credentials}
 }
 
-// desktopPlan is the credential's subscription plan, or nil before the first lookup.
+// desktopPlan is the credential's subscription plan: Claude's from the profile lookup, Codex's
+// from its login token. Nil when unknown. Codex plans publish no usage multiple.
 func desktopPlan(auth *coreauth.Auth) gin.H {
-	plan, ok := claudeusage.PlanOf(auth)
-	if !ok {
-		return nil
+	if plan, ok := claudeusage.PlanOf(auth); ok {
+		var multiplier *float64
+		if plan.Multiplier > 0 {
+			multiplier = &plan.Multiplier
+		}
+		return gin.H{"tier": plan.Tier, "type": plan.Type, "label": plan.Label, "multiplier": multiplier}
 	}
-	var multiplier *float64
-	if plan.Multiplier > 0 {
-		multiplier = &plan.Multiplier
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		if planType := strings.TrimSpace(auth.Attributes["plan_type"]); planType != "" {
+			return gin.H{"tier": planType, "type": planType, "label": claudeusage.TypeLabel(planType), "multiplier": nil}
+		}
 	}
-	return gin.H{"tier": plan.Tier, "type": plan.Type, "label": plan.Label, "multiplier": multiplier}
+	return nil
 }
 
 func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {

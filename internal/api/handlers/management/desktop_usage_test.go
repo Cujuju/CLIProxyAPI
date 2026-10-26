@@ -205,3 +205,13 @@ func TestShutdownServerLoopbackOnly(t *testing.T) {
 		t.Fatalf("shutdown calls = %d", calls)
 	}
 }
+
+func TestDesktopPlanReportsCodexPlanWithoutMultiple(t *testing.T) {
+	plan := desktopPlan(&coreauth.Auth{Provider: "codex", Attributes: map[string]string{"plan_type": "plus"}})
+	if plan == nil || plan["label"] != "Plus" || plan["tier"] != "plus" || plan["multiplier"] != nil {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if desktopPlan(&coreauth.Auth{Provider: "codex"}) != nil {
+		t.Fatal("plan without a plan type")
+	}
+}

@@ -55,7 +55,7 @@ func PlanOf(auth *coreauth.Auth) (Plan, bool) {
 	if tier == "" && planType == "" {
 		return Plan{}, false
 	}
-	plan := Plan{Tier: tier, Type: planType, Label: tier}
+	plan := Plan{Tier: tier, Type: planType}
 	if match := claudeTierMultiple.FindStringSubmatch(tier); match != nil {
 		if multiple, errParse := strconv.Atoi(match[1]); errParse == nil && multiple > 0 {
 			plan.Multiplier = float64(multiple)
@@ -66,9 +66,21 @@ func PlanOf(auth *coreauth.Auth) (Plan, bool) {
 		plan.Label = "Pro"
 	}
 	if plan.Label == "" {
-		plan.Label = planType
+		plan.Label = TypeLabel(strings.TrimPrefix(planType, "claude_"))
+	}
+	if plan.Label == "" {
+		plan.Label = tier
 	}
 	return plan, true
+}
+
+// TypeLabel turns a plan type such as "team" or "enterprise_plus" into "Team" or "Enterprise Plus".
+func TypeLabel(planType string) string {
+	words := strings.FieldsFunc(planType, func(r rune) bool { return r == '_' || r == '-' || r == ' ' })
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
+	}
+	return strings.Join(words, " ")
 }
 
 func metadataString(auth *coreauth.Auth, key string) string {
