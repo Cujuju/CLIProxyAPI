@@ -85,6 +85,7 @@ time, 2s apart; a failing credential is retried after 15 minutes.
       "cooldown_until": null,
       "weight": 1,
       "plan": {"tier": "default_claude_max_5x", "type": "claude_max", "label": "Max 5x", "multiplier": 5},
+      "reset_credits": null,
       "observed_at": "2026-10-25T12:00:00Z",
       "next_pick": true,
       "windows": [
@@ -109,6 +110,12 @@ time, 2s apart; a failing credential is retried after 15 minutes.
   `null` before the first lookup and for other providers. `multiplier` is 5-hour
   session usage relative to Claude Pro, read from the tier (`..._5x` = 5) or 1 for
   Pro; `null` when unpublished (Team, Enterprise, every Codex plan).
+- `reset_credits` are a Codex account's rate-limit reset credits from ChatGPT's
+  usage document, looked up every 15 minutes:
+  `{"available": 1, "applicable": 0, "checked_at": "2026-10-26T12:00:00Z"}`.
+  `available` is how many the account holds; `applicable` is how many can be
+  used now, against a limit it has reached. `null` before the first lookup, when
+  the account reports none, and for other providers (Claude reports no such credit).
 - `observed_at` is the time of the latest usage snapshot, else `null`.
 - `next_pick` marks the credential the strategy would choose for a new
   conversation within its provider. Rotating strategies (`round-robin`) mark none.

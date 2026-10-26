@@ -31,6 +31,9 @@ const (
 	codexResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
 )
 
+// CodexUserAgent is the User-Agent Codex requests carry when no config or client value overrides it.
+const CodexUserAgent = codexUserAgent
+
 var dataTag = []byte("data:")
 
 func translateCodexRequestPair(from, to sdktranslator.Format, model string, originalPayload, payload []byte, stream bool, preserveEmptyThinkingBlocks ...bool) ([]byte, []byte) {

@@ -234,6 +234,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if !homeEnabled {
 		go s.runAntigravityModelRefresh(ctx)
 		go s.runClaudeUsagePolling(ctx)
+		go s.runCodexUsagePolling(ctx)
 	}
 
 	select {

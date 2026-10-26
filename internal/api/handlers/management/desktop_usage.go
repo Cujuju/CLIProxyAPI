@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/claudeusage"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexusage"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/lifecycle"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -164,6 +165,7 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		credential["next_pick"] = pick != "" && pick == auth.ID
 		credential["weight"] = coreauth.CredentialWeight(auth)
 		credential["plan"] = desktopPlan(auth)
+		credential["reset_credits"] = desktopResetCredits(auth)
 		credential["preferred"] = preferred[strings.ToLower(strings.TrimSpace(auth.Provider))] == auth.ID
 		credential["windows"] = desktopWindows(auth, now)
 		credentials = append(credentials, credential)
@@ -187,6 +189,15 @@ func desktopPlan(auth *coreauth.Auth) gin.H {
 		}
 	}
 	return nil
+}
+
+// desktopResetCredits is a Codex account's rate-limit reset credits; nil when never reported.
+func desktopResetCredits(auth *coreauth.Auth) gin.H {
+	credits, ok := codexusage.ResetCreditsOf(auth)
+	if !ok {
+		return nil
+	}
+	return gin.H{"available": credits.Available, "applicable": credits.Applicable, "checked_at": credits.CheckedAt.UTC()}
 }
 
 func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {

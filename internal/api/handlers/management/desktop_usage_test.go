@@ -215,3 +215,16 @@ func TestDesktopPlanReportsCodexPlanWithoutMultiple(t *testing.T) {
 		t.Fatal("plan without a plan type")
 	}
 }
+
+func TestDesktopResetCreditsReportsStoredLookup(t *testing.T) {
+	auth := &coreauth.Auth{Provider: "codex", Metadata: map[string]any{
+		"reset_credits_available": float64(1), "reset_credits_applicable": float64(0), "reset_credits_checked_at": "2026-10-26T12:00:00Z",
+	}}
+	got := desktopResetCredits(auth)
+	if got == nil || got["available"] != 1 || got["applicable"] != 0 {
+		t.Fatalf("reset credits = %+v", got)
+	}
+	if desktopResetCredits(&coreauth.Auth{Provider: "codex", Metadata: map[string]any{}}) != nil {
+		t.Fatal("reset credits without a lookup")
+	}
+}
