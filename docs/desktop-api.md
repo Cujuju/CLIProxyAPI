@@ -86,9 +86,9 @@ time, 2s apart; a failing credential is retried after 15 minutes.
       "observed_at": "2026-10-25T12:00:00Z",
       "next_pick": true,
       "windows": [
-        {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed"},
-        {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning"},
-        {"key": "seven_day_fable", "label": "Weekly · Fable", "used_percent": 100, "resets_at": "2026-10-30T09:00:00Z", "status": "rejected"}
+        {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "duration_seconds": 18000, "scoped": false},
+        {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "duration_seconds": 604800, "scoped": false},
+        {"key": "seven_day_fable", "label": "Weekly · Fable", "used_percent": 100, "resets_at": "2026-10-30T09:00:00Z", "status": "rejected", "duration_seconds": 604800, "scoped": true}
       ]
     }
   ]
@@ -106,7 +106,10 @@ time, 2s apart; a failing credential is retried after 15 minutes.
   Credentials defined in the config file are ranked but not listed, so a provider
   may have no listed `next_pick`.
 - `windows` are sorted account-wide first, shorter before longer. `used_percent`,
-  `resets_at` and `status` are `null` when unknown. Claude, Codex and Devin
+  `resets_at`, `status` and `duration_seconds` are `null` when unknown.
+  `duration_seconds` is the window length. `scoped` is `true` for model-, feature-
+  or spend-specific windows; only unscoped windows describe the whole account and
+  drive `soonest-reset` routing. Claude, Codex and Devin
   credentials report windows; other providers return `[]`.
 
 ## POST /v8/management/usage/refresh

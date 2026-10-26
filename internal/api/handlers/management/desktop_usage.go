@@ -32,6 +32,10 @@ type desktopUsageWindow struct {
 	UsedPercent *float64   `json:"used_percent"`
 	ResetsAt    *time.Time `json:"resets_at"`
 	Status      *string    `json:"status"`
+	// DurationSeconds is the window length; null when the provider does not say.
+	DurationSeconds *int64 `json:"duration_seconds"`
+	// Scoped marks model-, feature- or spend-specific windows; only unscoped ones drive routing.
+	Scoped bool `json:"scoped"`
 }
 
 type desktopUsageRefreshRequest struct {
@@ -167,7 +171,11 @@ func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {
 	windows := coreauth.QuotaWindows(auth, now)
 	out := make([]desktopUsageWindow, 0, len(windows))
 	for _, window := range windows {
-		item := desktopUsageWindow{Key: window.Key, Label: window.Label, UsedPercent: window.UsedPercent}
+		item := desktopUsageWindow{Key: window.Key, Label: window.Label, UsedPercent: window.UsedPercent, Scoped: window.Scoped}
+		if window.Duration > 0 {
+			seconds := int64(window.Duration / time.Second)
+			item.DurationSeconds = &seconds
+		}
 		if !window.ResetsAt.IsZero() {
 			resetsAt := window.ResetsAt.UTC()
 			item.ResetsAt = &resetsAt

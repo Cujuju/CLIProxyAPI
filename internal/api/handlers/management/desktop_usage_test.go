@@ -32,6 +32,8 @@ type desktopUsageResponse struct {
 			UsedPercent *float64   `json:"used_percent"`
 			ResetsAt    *time.Time `json:"resets_at"`
 			Status      *string    `json:"status"`
+			Duration    *int64     `json:"duration_seconds"`
+			Scoped      bool       `json:"scoped"`
 		} `json:"windows"`
 	} `json:"credentials"`
 	Errors map[string]string `json:"errors"`
@@ -119,6 +121,9 @@ func TestGetUsageWindowsShapeAndNextPick(t *testing.T) {
 			}
 			if weekly.UsedPercent == nil || *weekly.UsedPercent != 40 || weekly.ResetsAt == nil || weekly.Status == nil || *weekly.Status != "allowed" {
 				t.Fatalf("weekly = %+v", weekly)
+			}
+			if fiveHour.Duration == nil || *fiveHour.Duration != 5*3600 || weekly.Duration == nil || *weekly.Duration != 7*24*3600 || fiveHour.Scoped || weekly.Scoped {
+				t.Fatalf("duration/scope = %+v", credential.Windows)
 			}
 			if fiveHour.Status != nil {
 				t.Fatalf("missing status should be null: %+v", fiveHour)
