@@ -112,6 +112,7 @@ the proxy renews the token.
       "reset_credits": null,
       "observed_at": "2026-10-25T12:00:00Z",
       "next_pick": true,
+      "account_view": false,
       "windows": [
         {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "duration_seconds": 18000, "scoped": false, "reset_cadence": "on_use"},
         {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "duration_seconds": 604800, "scoped": false, "reset_cadence": "fixed"},
@@ -145,6 +146,11 @@ the proxy renews the token.
   conversation within its provider. Rotating strategies (`round-robin`) mark none.
   Credentials defined in the config file are ranked but not listed, so a provider
   may have no listed `next_pick`.
+- `account_view` marks the Codex credential that Codex's ChatGPT account calls
+  (`/backend-api/`: usage, plan) reach, even under rotating strategies and when
+  every account is cooling down (then the one that recovers first). `false` for
+  every other credential. Clients name their pool login after it, so usage views
+  can match the reading to the account.
 - `windows` are sorted account-wide first, shorter before longer. `used_percent`,
   `resets_at`, `status` and `duration_seconds` are `null` when unknown.
   `duration_seconds` is the window length. `scoped` is `true` for model-, feature-

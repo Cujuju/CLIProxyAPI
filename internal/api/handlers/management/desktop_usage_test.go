@@ -24,6 +24,7 @@ type desktopUsageResponse struct {
 		Note          string     `json:"note"`
 		Disabled      bool       `json:"disabled"`
 		NextPick      bool       `json:"next_pick"`
+		AccountView   bool       `json:"account_view"`
 		ObservedAt    *time.Time `json:"observed_at"`
 		CooldownUntil *time.Time `json:"cooldown_until"`
 		Weight        int64      `json:"weight"`
@@ -156,6 +157,17 @@ func TestGetUsageWindowsShapeAndNextPick(t *testing.T) {
 	if !picks["codex-a"] {
 		t.Fatalf("sole available codex credential should be next pick: %v", picks)
 	}
+	assertAccountView(t, payload, "codex-a")
+}
+
+// assertAccountView checks that only the given Codex credential is marked as the one Codex's account calls reach.
+func assertAccountView(t *testing.T, payload desktopUsageResponse, want string) {
+	t.Helper()
+	for _, credential := range payload.Credentials {
+		if credential.AccountView != (credential.ID == want) {
+			t.Fatalf("account_view on %s = %v, want only %s", credential.ID, credential.AccountView, want)
+		}
+	}
 }
 
 func TestGetUsageWindowsRotatingStrategyHasNoNextPick(t *testing.T) {
@@ -166,6 +178,8 @@ func TestGetUsageWindowsRotatingStrategyHasNoNextPick(t *testing.T) {
 			t.Fatalf("round-robin has no deterministic pick: %+v", credential)
 		}
 	}
+	// Codex's account calls still reach one account.
+	assertAccountView(t, payload, "codex-a")
 }
 
 func TestRefreshUsageWindowsValidation(t *testing.T) {
