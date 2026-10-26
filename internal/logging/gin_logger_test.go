@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,29 @@ func TestGinLogrusRecoveryRepanicsErrAbortHandler(t *testing.T) {
 	}()
 
 	engine.ServeHTTP(recorder, req)
+}
+
+// A client that disconnects mid-stream makes httputil.ReverseProxy panic with ErrAbortHandler; that is routine, not an error.
+func TestGinLogrusRecoveryLogsNothingForErrAbortHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var written bytes.Buffer
+	previous := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &written
+	t.Cleanup(func() { gin.DefaultErrorWriter = previous })
+
+	engine := gin.New()
+	engine.Use(GinLogrusRecovery())
+	engine.GET("/abort", func(c *gin.Context) {
+		panic(http.ErrAbortHandler)
+	})
+
+	func() {
+		defer func() { _ = recover() }()
+		engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
+	}()
+	if written.Len() != 0 {
+		t.Fatalf("recovery logged an aborted handler:\n%s", written.String())
+	}
 }
 
 func TestGinLogrusRecoveryHandlesRegularPanic(t *testing.T) {
