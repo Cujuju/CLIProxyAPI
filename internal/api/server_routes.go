@@ -139,6 +139,11 @@ func (s *Server) setupRoutes() {
 		v1beta.GET("/models/*action", s.geminiGetHandler(geminiHandlers))
 	}
 
+	// Claude Code checks its base URL with HEAD /api/hello at startup; api.anthropic.com answers it without a key.
+	anthropicHello := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "hello"}) }
+	s.engine.GET("/api/hello", anthropicHello)
+	s.engine.HEAD("/api/hello", anthropicHello)
+
 	// Root endpoint
 	s.engine.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
