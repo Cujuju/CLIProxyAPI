@@ -44,7 +44,9 @@ type desktopRequestEvent struct {
 	TTFTMs      int64     `json:"ttft_ms,omitempty"`
 	InputTokens int64     `json:"input_tokens"`
 	Output      int64     `json:"output_tokens"`
-	Cached      int64     `json:"cached_tokens"`
+	// Cached counts cache reads; CacheWrite counts tokens written to the prompt cache.
+	Cached     int64 `json:"cached_tokens"`
+	CacheWrite int64 `json:"cache_creation_tokens"`
 }
 
 type desktopEventSubscriber struct {
@@ -98,6 +100,7 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 		Stream: record.Stream, Failed: record.Failed, StatusCode: record.Fail.StatusCode,
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),
 		InputTokens: record.Detail.InputTokens, Output: record.Detail.OutputTokens, Cached: record.Detail.CachedTokens,
+		CacheWrite: record.Detail.CacheCreationTokens,
 	}
 	if record.Failed && record.Fail.Body != "" {
 		event.Error = coreauth.ExtractUpstreamErrorSummary(record.Fail.Body)
