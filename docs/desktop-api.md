@@ -175,3 +175,36 @@ gets `event: resync` and should reload `GET /usage/windows`. Comment lines
    `{"status":"wait"}` while pending, `{"status":"ok"}` when saved,
    `{"status":"error","error":"<message>"}` on failure. The session times out
    after 5 minutes. `DELETE /v8/management/oauth/session?state=<state>` cancels it.
+
+## Pool usage limit (429)
+
+When every credential that serves a model is spent, the request fails with
+`429` and error type `usage_limit_reached`, including the request that spends
+the last credential. `X-Should-Retry: false` stops client retries. Clients read
+limits from headers, never the body, so the response repeats the soonest reset
+in each client's own header family:
+
+- Claude Code: `Anthropic-Ratelimit-Unified-Status: rejected`, `-Reset`,
+  `-Representative-Claim` (`five_hour` or `seven_day`), and that window's
+  `-5h-`/`-7d-` `Status`, `Reset` and `Utilization: 1`. Claude Code reads them
+  only when signed in to a subscription, not with `ANTHROPIC_AUTH_TOKEN`.
+- Codex: `X-Codex-Primary-Used-Percent: 100`, `X-Codex-Primary-Reset-At`, and
+  `X-Codex-Primary-Window-Minutes` when the window is known.
+
+Hosts such as T3 Code schedule a resume from these.
+
+## Codex account calls (`/backend-api/*`)
+
+With `chatgpt_base_url = "http://<proxy>/backend-api/"`, Codex sends its
+ChatGPT account calls (`/wham/usage`, rate-limit reset credits, plugins, tasks)
+here. Any `/backend-api/` path that no model route claims is forwarded to
+`https://chatgpt.com` as one pooled Codex account: the one new requests route
+to (preferred credential, then the routing strategy), or the one that
+recovers first when all are spent. The proxy replaces `Authorization` and
+`Chatgpt-Account-Id` with that account's, and strips the client key.
+
+The caller authenticates with a client key (`access.api-keys`). Codex sends its
+`auth.json` access token, so that token must be a client key; Codex then needs
+no ChatGPT login of its own. A `401` from chatgpt.com is returned as `502`: it
+means the pooled credential failed, and Codex would otherwise try to refresh
+its own login.
