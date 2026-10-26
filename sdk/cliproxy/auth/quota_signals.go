@@ -53,15 +53,46 @@ func (q *QuotaState) ObserveResponseHeadersForProvider(provider string, headers 
 	return true
 }
 
+// ObserveLookupForProvider replaces the usage-lookup snapshot. It leaves the
+// response snapshot alone, so traffic never erases windows only a lookup reports.
+func (q *QuotaState) ObserveLookupForProvider(provider string, headers http.Header, lookedUpAt time.Time) bool {
+	if q == nil || !ProviderSupportsQuotaObservation(provider) {
+		return false
+	}
+	next := collectQuotaSignals(provider, headers)
+	if len(next) == 0 {
+		return false
+	}
+	if lookedUpAt.IsZero() {
+		lookedUpAt = time.Now()
+	}
+	q.LookupSignals = next
+	q.LookedUpAt = lookedUpAt
+	return true
+}
+
 // ClearObservationSignals removes only passive observation data. It leaves
 // cooldown and scheduler state untouched.
 func (q *QuotaState) ClearObservationSignals() bool {
-	if q == nil || (len(q.Signals) == 0 && q.ObservedAt.IsZero()) {
+	if q == nil || (len(q.Signals) == 0 && q.ObservedAt.IsZero() && len(q.LookupSignals) == 0 && q.LookedUpAt.IsZero()) {
 		return false
 	}
 	q.Signals = nil
 	q.ObservedAt = time.Time{}
+	q.LookupSignals = nil
+	q.LookedUpAt = time.Time{}
 	return true
+}
+
+// applyObservationFields writes only observation fields, leaving cooldown state alone.
+func applyObservationFields(dst *QuotaState, observation QuotaState) {
+	if dst == nil {
+		return
+	}
+	dst.ObservedAt = observation.ObservedAt
+	dst.Signals = observation.Signals
+	dst.LookedUpAt = observation.LookedUpAt
+	dst.LookupSignals = observation.LookupSignals
 }
 
 // cooldownFieldsOf copies only scheduler cooldown fields. Observation data is
@@ -214,14 +245,17 @@ func isQuotaSignalHeaderForProvider(provider, name string) bool {
 	return false
 }
 
-// mergeQuotaObservation keeps the newest observation snapshot instead of
-// unioning signals captured at different times, so merging an older snapshot
-// can never resurrect a stale watermark.
+// mergeQuotaObservation keeps the newest response and lookup snapshots, each
+// independently, instead of unioning signals captured at different times, so
+// merging an older snapshot can never resurrect a stale watermark.
 func mergeQuotaObservation(target, source QuotaState) QuotaState {
-	if source.ObservedAt.IsZero() || source.ObservedAt.Before(target.ObservedAt) {
-		return target
+	if !source.ObservedAt.IsZero() && !source.ObservedAt.Before(target.ObservedAt) {
+		target.ObservedAt = source.ObservedAt
+		target.Signals = cloneSignals(source.Signals)
 	}
-	target.ObservedAt = source.ObservedAt
-	target.Signals = source.Clone().Signals
+	if !source.LookedUpAt.IsZero() && !source.LookedUpAt.Before(target.LookedUpAt) {
+		target.LookedUpAt = source.LookedUpAt
+		target.LookupSignals = cloneSignals(source.LookupSignals)
+	}
 	return target
 }

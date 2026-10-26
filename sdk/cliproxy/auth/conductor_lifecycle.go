@@ -403,8 +403,7 @@ func (m *Manager) updateInternalLocked(ctx context.Context, base, auth *Auth, mo
 			}
 			observation := mergeQuotaObservation(auth.Quota, existing.Quota)
 			auth.Quota = existing.Quota.Clone()
-			auth.Quota.ObservedAt = observation.ObservedAt
-			auth.Quota.Signals = observation.Signals
+			applyObservationFields(&auth.Quota, observation)
 			auth.cooldownRecordedSeq = existing.cooldownRecordedSeq
 		}
 		if credChanged || mode == updateModeRefresh {
@@ -439,8 +438,7 @@ func (m *Manager) updateInternalLocked(ctx context.Context, base, auth *Auth, mo
 			// Preserve cooldown fields; keep the newest observation snapshot.
 			observation := mergeQuotaObservation(auth.Quota, existing.Quota)
 			auth.Quota = existing.Quota
-			auth.Quota.ObservedAt = observation.ObservedAt
-			auth.Quota.Signals = observation.Signals
+			applyObservationFields(&auth.Quota, observation)
 			auth.cooldownRecordedSeq = existing.cooldownRecordedSeq
 			if auth.Status == StatusActive {
 				auth.Status = existing.Status

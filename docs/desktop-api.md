@@ -75,12 +75,18 @@ PUT /v8/management/config/routing/session-affinity  body: true
 
 ## Claude usage lookups
 
-Reset times come from response headers during traffic and are not persisted,
-so after a restart the proxy looks up each enabled Claude OAuth credential's
-usage (`GET https://api.anthropic.com/api/oauth/usage`). It checks every
-minute and looks up credentials with no snapshot, a snapshot older than 15
-minutes, or an account window whose reset has passed. Lookups run one at a
-time, 2s apart; a failing credential is retried after 15 minutes.
+Response headers during traffic carry only the 5-hour, weekly and weekly Fable
+windows, and nothing is persisted, so the proxy looks up each enabled
+Claude OAuth credential's usage (`GET https://api.anthropic.com/api/oauth/usage`)
+at startup and keeps it fresh. The lookup also reports per-model and spend
+windows. It is stored apart from the header snapshot: traffic updates the
+windows its headers carry and never removes lookup-only windows.
+
+The proxy checks every minute and looks up credentials with no lookup, a lookup
+older than 15 minutes, or a window that reset since the last lookup. Lookups run
+one at a time, 2s apart; a failing credential is retried after 15 minutes. An
+expired access token is not a failure: the lookup is retried 10s later, after
+the proxy renews the token.
 
 ## GET /v8/management/usage/windows
 
@@ -192,7 +198,9 @@ includes `cached_tokens` and cache writes are not reported.
 
 Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
 one credential selection share `selection_id`. A reader too slow for a burst
-gets `event: resync` and should reload `GET /usage/windows`. Comment lines
+gets `event: resync` and should reload `GET /usage/windows`. `event: usage`
+(data `{}`) means a usage lookup recorded new windows; reload `GET /usage/windows`.
+Lookups that land before the reader catches up share one event. Comment lines
 (`: keep-alive`) arrive every 15s.
 
 ## Adding a Claude account (OAuth)

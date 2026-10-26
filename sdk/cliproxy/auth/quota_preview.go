@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,19 +36,68 @@ func PreviewNextPick(strategy string, auths []*Auth, now time.Time) string {
 	}
 }
 
-// ObserveQuotaHeaders records an out-of-band quota snapshot, such as a usage
-// lookup, for one credential. Older snapshots never replace newer ones.
-func (m *Manager) ObserveQuotaHeaders(authID string, headers http.Header, observedAt time.Time) bool {
+// ObserveQuotaLookup records an out-of-band usage lookup, in response-header
+// shape, for one credential. Older lookups never replace newer ones. Lookup
+// subscribers are notified after a lookup is recorded.
+func (m *Manager) ObserveQuotaLookup(authID string, headers http.Header, lookedUpAt time.Time) bool {
 	if m == nil || strings.TrimSpace(authID) == "" || len(headers) == 0 {
 		return false
 	}
+	if !m.recordQuotaLookup(authID, headers, lookedUpAt) {
+		return false
+	}
+	m.lookupListeners.notify()
+	return true
+}
+
+func (m *Manager) recordQuotaLookup(authID string, headers http.Header, lookedUpAt time.Time) bool {
 	release := m.lockAuthMutation(authID)
 	defer release()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	auth := m.auths[authID]
-	if auth == nil || observedAt.Before(auth.Quota.ObservedAt) {
+	if auth == nil || lookedUpAt.Before(auth.Quota.LookedUpAt) {
 		return false
 	}
-	return auth.Quota.ObserveResponseHeadersForProvider(auth.Provider, headers, observedAt)
+	return auth.Quota.ObserveLookupForProvider(auth.Provider, headers, lookedUpAt)
+}
+
+// SubscribeQuotaLookups calls fn after each recorded usage lookup until the
+// returned func is called. fn runs on the lookup's goroutine and must not block.
+func (m *Manager) SubscribeQuotaLookups(fn func()) (unsubscribe func()) {
+	return m.lookupListeners.add(fn)
+}
+
+type quotaLookupListeners struct {
+	mu     sync.Mutex
+	nextID int
+	byID   map[int]func()
+}
+
+func (l *quotaLookupListeners) add(fn func()) func() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.byID == nil {
+		l.byID = map[int]func(){}
+	}
+	id := l.nextID
+	l.nextID++
+	l.byID[id] = fn
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		delete(l.byID, id)
+	}
+}
+
+func (l *quotaLookupListeners) notify() {
+	l.mu.Lock()
+	fns := make([]func(), 0, len(l.byID))
+	for _, fn := range l.byID {
+		fns = append(fns, fn)
+	}
+	l.mu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
 }

@@ -158,8 +158,8 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 			credential["cooldown_until"] = until.UTC()
 		}
 		credential["observed_at"] = nil
-		if !auth.Quota.ObservedAt.IsZero() {
-			credential["observed_at"] = auth.Quota.ObservedAt.UTC()
+		if observedAt := latestQuotaSnapshot(auth.Quota); !observedAt.IsZero() {
+			credential["observed_at"] = observedAt.UTC()
 		}
 		pick := nextPick[strings.ToLower(strings.TrimSpace(auth.Provider))]
 		credential["next_pick"] = pick != "" && pick == auth.ID
@@ -198,6 +198,14 @@ func desktopResetCredits(auth *coreauth.Auth) gin.H {
 		return nil
 	}
 	return gin.H{"available": credits.Available, "applicable": credits.Applicable, "checked_at": credits.CheckedAt.UTC()}
+}
+
+// latestQuotaSnapshot is when the newer of the response and lookup snapshots was taken.
+func latestQuotaSnapshot(quota coreauth.QuotaState) time.Time {
+	if quota.LookedUpAt.After(quota.ObservedAt) {
+		return quota.LookedUpAt
+	}
+	return quota.ObservedAt
 }
 
 func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {

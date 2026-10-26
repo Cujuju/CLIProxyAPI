@@ -326,18 +326,31 @@ type QuotaState struct {
 	// Cooldown transitions must use applyCooldownFields so they cannot replace
 	// this snapshot.
 	Signals map[string]string `json:"signals,omitempty"`
+	// LookedUpAt is when LookupSignals were fetched by an out-of-band usage lookup.
+	LookedUpAt time.Time `json:"looked_up_at,omitempty"`
+	// LookupSignals is the latest usage lookup in the Signals header shape. A lookup
+	// reports windows that responses omit, so it is kept apart from Signals and
+	// only the next lookup replaces it. QuotaWindows composes both.
+	LookupSignals map[string]string `json:"lookup_signals,omitempty"`
 }
 
 // Clone returns an independent copy of the quota state.
 func (q QuotaState) Clone() QuotaState {
 	copyQuota := q
-	if len(q.Signals) > 0 {
-		copyQuota.Signals = make(map[string]string, len(q.Signals))
-		for key, value := range q.Signals {
-			copyQuota.Signals[key] = value
-		}
-	}
+	copyQuota.Signals = cloneSignals(q.Signals)
+	copyQuota.LookupSignals = cloneSignals(q.LookupSignals)
 	return copyQuota
+}
+
+func cloneSignals(signals map[string]string) map[string]string {
+	if len(signals) == 0 {
+		return signals
+	}
+	out := make(map[string]string, len(signals))
+	for key, value := range signals {
+		out[key] = value
+	}
+	return out
 }
 
 // ModelState captures the execution state for a specific model under an auth entry.

@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
@@ -39,7 +40,9 @@ func readEvent(t *testing.T, reader *bufio.Reader) (string, string) {
 	}
 }
 
-func TestDesktopEventsStreamsUsageRecords(t *testing.T) {
+// openDesktopEvents connects to the event stream and consumes the "ready" event.
+func openDesktopEvents(t *testing.T, manager *coreauth.Manager) *bufio.Reader {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("port: 8317\n"), 0600); err != nil {
@@ -49,7 +52,7 @@ func TestDesktopEventsStreamsUsageRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := management.NewHandler(cfg, path, nil)
+	h := management.NewHandler(cfg, path, manager)
 	h.SetSupervisorPassword("0123456789abcdef0123456789abcdef")
 	s := &Server{cfg: cfg, engine: gin.New(), mgmt: h}
 	s.managementRoutesEnabled.Store(true)
@@ -58,14 +61,14 @@ func TestDesktopEventsStreamsUsageRecords(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/v8/management/usage/events", nil)
 	req.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		t.Fatalf("status=%d content-type=%q", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
@@ -73,6 +76,25 @@ func TestDesktopEventsStreamsUsageRecords(t *testing.T) {
 	if name, _ := readEvent(t, reader); name != "ready" {
 		t.Fatalf("first event = %q, want ready", name)
 	}
+	return reader
+}
+
+func TestDesktopEventsStreamsUsageLookups(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{ID: "a", Provider: "claude", Attributes: map[string]string{"runtime_only": "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	reader := openDesktopEvents(t, manager)
+	if !manager.ObserveQuotaLookup("a", http.Header{"Anthropic-Ratelimit-Unified-7d_sonnet-Utilization": {"0.5"}}, time.Now()) {
+		t.Fatal("lookup not recorded")
+	}
+	if name, _ := readEvent(t, reader); name != "usage" {
+		t.Fatalf("event = %q, want usage", name)
+	}
+}
+
+func TestDesktopEventsStreamsUsageRecords(t *testing.T) {
+	reader := openDesktopEvents(t, nil)
 
 	coreusage.PublishRecord(context.Background(), coreusage.Record{
 		RequestID: "req-1", SelectionID: "sel-1", Provider: "claude", Model: "claude-x", AuthIndex: "3",

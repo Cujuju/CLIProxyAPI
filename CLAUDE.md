@@ -14,4 +14,4 @@ See AGENTS.md for upstream conventions. Desktop-facing API: docs/desktop-api.md.
 ## Upstream sync
 - `scripts/sync-upstream.sh` on a clean `main`: merges `upstream/main` (merge, not rebase: `main` is published), builds, cross-compiles the desktop targets and runs `go test ./...`. It never pushes.
 - Known upstream failures on Windows (they fail at the pre-fork commit too, so not merge regressions): `TestResponsesInterruptStopsHTTPUpstream` (sdk/api/handlers/openai), `TestToolSearchDisabledMatchesDevGolden` (internal/translator/claude/openai/responses), `TestAdvertiserAndBrowser_Integration` (internal/discovery, needs mDNS).
-- Fork-only changes worth re-checking after a merge: `sdk/cliproxy/auth` (soonest-reset, quota exhaustion, first-byte timeout, selection IDs, preferred auth) and `internal/api/handlers/management/desktop_*.go`.
+- Fork-only changes worth re-checking after a merge: `sdk/cliproxy/auth` (soonest-reset, quota exhaustion, first-byte timeout, selection IDs, preferred auth, usage-lookup snapshot `QuotaState.LookupSignals`) and `internal/api/handlers/management/desktop_*.go`.

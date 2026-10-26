@@ -63,11 +63,11 @@ func TestPollerRefreshesOnlyStaleEligibleCredentials(t *testing.T) {
 	}
 	stored, _ := f.manager.GetByID("a")
 	windows := coreauth.QuotaWindows(stored, f.now)
-	if len(windows) != 2 || !windows[1].ResetsAt.Equal(f.now.Add(48*time.Hour)) || !stored.Quota.ObservedAt.Equal(f.now) {
+	if len(windows) != 2 || !windows[1].ResetsAt.Equal(f.now.Add(48*time.Hour)) || !stored.Quota.LookedUpAt.Equal(f.now) {
 		t.Fatalf("snapshot = %+v windows = %+v", stored.Quota, windows)
 	}
 
-	f.now = f.now.Add(MaxObservationAge - time.Minute)
+	f.now = f.now.Add(MaxLookupAge - time.Minute)
 	f.poller.RefreshStale(context.Background())
 	if f.calls["a"] != 1 {
 		t.Fatalf("fresh snapshot was looked up again: %v", f.calls)
@@ -82,10 +82,10 @@ func TestPollerRefreshesOnlyStaleEligibleCredentials(t *testing.T) {
 
 func TestPollerRefreshesWhenAccountWindowResets(t *testing.T) {
 	f := newPollerFixture(t, claudeOAuth("a"))
-	f.fiveHourIn = MaxObservationAge / 3
+	f.fiveHourIn = MaxLookupAge / 3
 	f.poller.RefreshStale(context.Background())
-	// Past the 5-hour reset while the snapshot is still younger than MaxObservationAge.
-	f.now = f.now.Add(MaxObservationAge / 2)
+	// Past the 5-hour reset while the lookup is still younger than MaxLookupAge.
+	f.now = f.now.Add(MaxLookupAge / 2)
 	f.poller.RefreshStale(context.Background())
 	if f.calls["a"] != 2 {
 		t.Fatalf("calls = %v", f.calls)
@@ -110,11 +110,82 @@ func TestPollerBacksOffFailingCredential(t *testing.T) {
 	}
 }
 
-func TestObserveQuotaHeadersKeepsNewerSnapshot(t *testing.T) {
+func TestObserveQuotaLookupKeepsNewerSnapshot(t *testing.T) {
 	f := newPollerFixture(t, claudeOAuth("a"))
 	f.poller.RefreshStale(context.Background())
 	older := f.now.Add(-time.Minute)
-	if f.manager.ObserveQuotaHeaders("a", map[string][]string{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.9"}}, older) {
-		t.Fatal("older observation replaced a newer one")
+	if f.manager.ObserveQuotaLookup("a", map[string][]string{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.9"}}, older) {
+		t.Fatal("older lookup replaced a newer one")
+	}
+}
+
+func TestPollerWaitsForExpiredTokenWithoutBackoff(t *testing.T) {
+	auth := claudeOAuth("a")
+	f := newPollerFixture(t, auth)
+	stored, _ := f.manager.GetByID("a")
+	stored.Metadata["expired"] = f.now.Add(-time.Minute).Format(time.RFC3339)
+	if _, errUpdate := f.manager.Update(context.Background(), stored); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if !f.poller.RefreshStale(context.Background()) || f.calls["a"] != 0 {
+		t.Fatalf("expired token should defer the lookup: calls = %v", f.calls)
+	}
+	stored, _ = f.manager.GetByID("a")
+	stored.Metadata["expired"] = f.now.Add(time.Hour).Format(time.RFC3339)
+	if _, errUpdate := f.manager.Update(context.Background(), stored); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if f.poller.RefreshStale(context.Background()) || f.calls["a"] != 1 {
+		t.Fatalf("renewed token should be looked up at once: calls = %v", f.calls)
+	}
+}
+
+func TestPollerRefreshesWhenScopedWindowResets(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	reset := f.now.Add(MaxLookupAge / 3)
+	f.poller.fetch = func(_ context.Context, _ *config.Config, auth *coreauth.Auth) (json.RawMessage, error) {
+		f.calls[auth.ID]++
+		return json.RawMessage(`{"seven_day_sonnet":{"utilization":50,"resets_at":"` + reset.Format(time.RFC3339) + `"}}`), nil
+	}
+	f.poller.RefreshStale(context.Background())
+	f.now = f.now.Add(MaxLookupAge / 2)
+	f.poller.RefreshStale(context.Background())
+	if f.calls["a"] != 2 {
+		t.Fatalf("scoped reset should force a lookup: calls = %v", f.calls)
+	}
+	// The second lookup still reports the passed reset; that must not loop.
+	f.poller.RefreshStale(context.Background())
+	if f.calls["a"] != 2 {
+		t.Fatalf("reset reported by the lookup itself forced another: calls = %v", f.calls)
+	}
+}
+
+func TestLookupWindowsSurviveResponseHeaders(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	f.poller.fetch = func(_ context.Context, _ *config.Config, auth *coreauth.Auth) (json.RawMessage, error) {
+		return json.RawMessage(`{"five_hour":{"utilization":10},"seven_day_sonnet":{"utilization":50},` +
+			`"monthly_spend":{"utilization":20,"limit_dollars":100}}`), nil
+	}
+	notified := 0
+	stop := f.manager.SubscribeQuotaLookups(func() { notified++ })
+	defer stop()
+	f.poller.RefreshStale(context.Background())
+	if notified != 1 {
+		t.Fatalf("lookup subscribers notified %d times", notified)
+	}
+
+	stored, _ := f.manager.GetByID("a")
+	stored.Quota.ObserveResponseHeadersForProvider("claude", map[string][]string{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.4"}}, f.now.Add(time.Minute))
+	got := map[string]float64{}
+	labels := map[string]string{}
+	for _, window := range coreauth.QuotaWindows(stored, f.now) {
+		got[window.Key] = *window.UsedPercent
+		labels[window.Key] = window.Label
+	}
+	if len(got) != 3 || got["five_hour"] != 40 || got["seven_day_sonnet"] != 50 || got["monthly_spend"] != 20 {
+		t.Fatalf("windows after traffic = %v", got)
+	}
+	if labels["monthly_spend"] != "Spend limit $100" {
+		t.Fatalf("lookup label lost: %v", labels)
 	}
 }
