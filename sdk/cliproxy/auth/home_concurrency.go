@@ -291,6 +291,15 @@ func CopySafeErrorHeaders(dst http.Header, err error) {
 			dst.Add(name, value)
 		}
 	}
+	// Every SafeResponseHeaders source is proxy-built, so these families never carry upstream values.
+	for name, values := range safe {
+		if !isUsageLimitHeader(name) {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(name, value)
+		}
+	}
 }
 
 func SafeResponseHeaders(err error) http.Header {

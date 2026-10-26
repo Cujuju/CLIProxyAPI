@@ -38,41 +38,41 @@ func cooldownAuth(t *testing.T, id, body string, recoverAt time.Time) *Auth {
 	})
 }
 
-func TestPoolQuotaResetsAt_AllSpentWindows(t *testing.T) {
+func TestPoolQuotaLimit_AllSpentWindows(t *testing.T) {
 	now := time.Now()
 	soon, later := now.Add(2*time.Hour).Truncate(time.Second), now.Add(5*time.Hour).Truncate(time.Second)
 	auths := []*Auth{claudeWindowAuth(t, "ex-a", "rejected", later), claudeWindowAuth(t, "ex-b", "rejected", soon)}
-	got, ok := poolQuotaResetsAt(auths, []string{"claude"}, exhaustionTestModel, now)
-	if !ok || !got.Equal(soon) {
-		t.Fatalf("got %v %v, want earliest reset %v", got, ok, soon)
+	got, ok := poolQuotaLimit(auths, []string{"claude"}, exhaustionTestModel, now)
+	if !ok || !got.ResetsAt.Equal(soon) || got.Window != fiveHourWindow {
+		t.Fatalf("got %+v %v, want earliest reset %v in a five-hour window", got, ok, soon)
 	}
 }
 
-func TestPoolQuotaResetsAt_ExplicitErrorCode(t *testing.T) {
+func TestPoolQuotaLimit_ExplicitErrorCode(t *testing.T) {
 	now := time.Now()
 	recoverAt := now.Add(3 * time.Hour)
 	auths := []*Auth{cooldownAuth(t, "ex-code", `429: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}`, recoverAt)}
-	if got, ok := poolQuotaResetsAt(auths, []string{"claude"}, exhaustionTestModel, now); !ok || !got.Equal(recoverAt) {
+	if got, ok := poolQuotaLimit(auths, []string{"claude"}, exhaustionTestModel, now); !ok || !got.ResetsAt.Equal(recoverAt) || got.Window != 0 {
 		t.Fatalf("got %v %v, want %v", got, ok, recoverAt)
 	}
 }
 
-func TestPoolQuotaResetsAt_MixedPoolStaysRetryable(t *testing.T) {
+func TestPoolQuotaLimit_MixedPoolStaysRetryable(t *testing.T) {
 	now := time.Now()
 	auths := []*Auth{
 		claudeWindowAuth(t, "ex-spent", "rejected", now.Add(time.Hour)),
 		// A plain rate limit: 429 without a quota code.
 		cooldownAuth(t, "ex-rate", `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`, now.Add(time.Minute)),
 	}
-	if _, ok := poolQuotaResetsAt(auths, []string{"claude"}, exhaustionTestModel, now); ok {
+	if _, ok := poolQuotaLimit(auths, []string{"claude"}, exhaustionTestModel, now); ok {
 		t.Fatal("mixed quota/rate-limit pool classified as a final usage limit")
 	}
 }
 
-func TestPoolQuotaResetsAt_FreeTextIsNotEvidence(t *testing.T) {
+func TestPoolQuotaLimit_FreeTextIsNotEvidence(t *testing.T) {
 	now := time.Now()
 	auths := []*Auth{cooldownAuth(t, "ex-text", "quota exceeded, usage_limit_reached maybe", now.Add(time.Hour))}
-	if _, ok := poolQuotaResetsAt(auths, []string{"claude"}, exhaustionTestModel, now); ok {
+	if _, ok := poolQuotaLimit(auths, []string{"claude"}, exhaustionTestModel, now); ok {
 		t.Fatal("free text classified as quota evidence")
 	}
 }
@@ -83,7 +83,7 @@ func TestModelCooldownError_UsageLimitContract(t *testing.T) {
 	if err.Headers().Get("Retry-After") == "" || err.Headers().Get(HeaderShouldRetry) != "" {
 		t.Fatal("ordinary cooldown must keep Retry-After and omit X-Should-Retry")
 	}
-	err.usageLimitResetsAt = resetsAt
+	err.usageLimit = quotaLimit{ResetsAt: resetsAt}
 	headers := err.Headers()
 	if headers.Get("Retry-After") != "" || headers.Get(HeaderShouldRetry) != "false" {
 		t.Fatalf("usage limit headers = %v, want no Retry-After and X-Should-Retry: false", headers)
@@ -112,7 +112,9 @@ func TestModelCooldownError_UsageLimitContract(t *testing.T) {
 	}
 }
 
-func TestExecute_ExhaustedPoolReturnsUsageLimit(t *testing.T) {
+// newExhaustingManager serves two codex credentials that answer every request with a quota 429.
+func newExhaustingManager(t *testing.T, reset time.Duration) *Manager {
+	t.Helper()
 	previous := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
 	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
@@ -120,24 +122,53 @@ func TestExecute_ExhaustedPoolReturnsUsageLimit(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.SetRetryConfig(0, 0, 2)
 	registerOverloadAuths(t, m, 2)
-	weeklyReset := 3 * time.Hour
-	m.RegisterExecutor(&issue6865Executor{id: "codex", executeFn: func(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
-		return cliproxyexecutor.Response{}, customStatusError{
+	quotaErr := func() error {
+		return customStatusError{
 			code:       http.StatusTooManyRequests,
 			msg:        `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}`,
-			retryAfter: &weeklyReset,
+			retryAfter: &reset,
 		}
-	}})
-	req := cliproxyexecutor.Request{Model: "gpt-5.6-terra"}
-	if _, err := m.Execute(context.Background(), []string{"codex"}, req, cliproxyexecutor.Options{}); err == nil {
-		t.Fatal("first request should fail on both exhausted credentials")
 	}
-	_, err := m.Execute(context.Background(), []string{"codex"}, req, cliproxyexecutor.Options{})
+	m.RegisterExecutor(&issue6865Executor{
+		id: "codex",
+		executeFn: func(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+			return cliproxyexecutor.Response{}, quotaErr()
+		},
+		streamFn: func(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+			return nil, quotaErr()
+		},
+	})
+	return m
+}
+
+func assertUsageLimit(t *testing.T, err error, reset time.Duration) {
+	t.Helper()
 	var cooldown *modelCooldownError
 	if !errors.As(err, &cooldown) || !cooldown.IsUsageLimit() {
 		t.Fatalf("err = %v, want a final usage limit", err)
 	}
-	if until := time.Until(cooldown.UsageLimitResetsAt()); until < weeklyReset-time.Minute || until > weeklyReset {
-		t.Fatalf("resets in %v, want about %v", until, weeklyReset)
+	if until := time.Until(cooldown.UsageLimitResetsAt()); until < reset-time.Minute || until > reset {
+		t.Fatalf("resets in %v, want about %v", until, reset)
 	}
+}
+
+// The request that spends the last credential answers like every later one.
+func TestExecute_ExhaustedPoolReturnsUsageLimit(t *testing.T) {
+	reset := 3 * time.Hour
+	m := newExhaustingManager(t, reset)
+	req := cliproxyexecutor.Request{Model: "gpt-5.6-terra"}
+	for i := 0; i < 2; i++ {
+		_, err := m.Execute(context.Background(), []string{"codex"}, req, cliproxyexecutor.Options{})
+		assertUsageLimit(t, err, reset)
+	}
+}
+
+func TestExecuteStream_ExhaustingRequestReturnsUsageLimit(t *testing.T) {
+	reset := 3 * time.Hour
+	m := newExhaustingManager(t, reset)
+	result, err := m.ExecuteStream(context.Background(), []string{"codex"}, cliproxyexecutor.Request{Model: "gpt-5.6-terra"}, cliproxyexecutor.Options{})
+	if result != nil {
+		t.Fatalf("result = %+v, want no stream", result)
+	}
+	assertUsageLimit(t, err, reset)
 }

@@ -173,6 +173,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 				return resp, nil
 			}
 		}
+		lastErr, _ = m.finalUsageLimitError(lastErr, normalized, retryModel)
 		return cliproxyexecutor.Response{}, lastErr
 	}
 	return cliproxyexecutor.Response{}, &Error{Code: "auth_not_found", Message: "no auth available"}
@@ -225,7 +226,8 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 			}
 		}
 		lastErr = preferredExecutionAttemptError(lastErr, preferredUpstreamErr)
-		return cliproxyexecutor.Response{}, unwrapExecutionBoundaryError(lastErr)
+		lastErr, _ = m.finalUsageLimitError(unwrapExecutionBoundaryError(lastErr), normalized, retryModel)
+		return cliproxyexecutor.Response{}, lastErr
 	}
 	return cliproxyexecutor.Response{}, &Error{Code: "auth_not_found", Message: "no auth available"}
 }
@@ -309,6 +311,10 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 			} else if ok {
 				return result, nil
 			}
+		}
+		// Checked before bootstrap errors, whose headers are the upstream's, not the pool's.
+		if usageLimit, ok := m.finalUsageLimitError(lastErr, normalized, retryModel); ok {
+			return nil, usageLimit
 		}
 		var bootstrapErr *streamBootstrapError
 		if errors.As(lastErr, &bootstrapErr) && bootstrapErr != nil {
