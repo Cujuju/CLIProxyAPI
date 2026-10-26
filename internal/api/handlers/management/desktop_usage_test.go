@@ -26,6 +26,7 @@ type desktopUsageResponse struct {
 		NextPick      bool       `json:"next_pick"`
 		ObservedAt    *time.Time `json:"observed_at"`
 		CooldownUntil *time.Time `json:"cooldown_until"`
+		Weight        int64      `json:"weight"`
 		Windows       []struct {
 			Key         string     `json:"key"`
 			Label       string     `json:"label"`
@@ -34,6 +35,7 @@ type desktopUsageResponse struct {
 			Status      *string    `json:"status"`
 			Duration    *int64     `json:"duration_seconds"`
 			Scoped      bool       `json:"scoped"`
+			Cadence     *string    `json:"reset_cadence"`
 		} `json:"windows"`
 	} `json:"credentials"`
 	Errors map[string]string `json:"errors"`
@@ -58,7 +60,7 @@ func newDesktopUsageHandler(t *testing.T, strategy string) *Handler {
 	cfg.Routing.Strategy = strategy
 	manager.SetConfig(cfg)
 	for _, auth := range []*coreauth.Auth{
-		{ID: "late", Index: "idx-late", Provider: "claude", Attributes: map[string]string{"runtime_only": "true", "note": "Work"},
+		{ID: "late", Index: "idx-late", Provider: "claude", Attributes: map[string]string{"runtime_only": "true", "note": "Work", "weight": "3"},
 			Quota: coreauth.QuotaState{ObservedAt: now, Signals: claudeUsageSignals(now.Add(72*time.Hour), now.Add(3*time.Hour))}},
 		{ID: "soon", Index: "idx-soon", Provider: "claude", Attributes: map[string]string{"runtime_only": "true"},
 			Quota: coreauth.QuotaState{ObservedAt: now, Signals: claudeUsageSignals(now.Add(24*time.Hour), now.Add(2*time.Hour))}},
@@ -108,8 +110,8 @@ func TestGetUsageWindowsShapeAndNextPick(t *testing.T) {
 		}
 		switch credential.ID {
 		case "late":
-			if credential.Note != "Work" {
-				t.Fatalf("note = %q", credential.Note)
+			if credential.Note != "Work" || credential.Weight != 3 {
+				t.Fatalf("note/weight = %q/%d", credential.Note, credential.Weight)
 			}
 		case "soon":
 			if len(credential.Windows) != 2 || credential.ObservedAt == nil {
@@ -124,6 +126,12 @@ func TestGetUsageWindowsShapeAndNextPick(t *testing.T) {
 			}
 			if fiveHour.Duration == nil || *fiveHour.Duration != 5*3600 || weekly.Duration == nil || *weekly.Duration != 7*24*3600 || fiveHour.Scoped || weekly.Scoped {
 				t.Fatalf("duration/scope = %+v", credential.Windows)
+			}
+			if credential.Weight != 1 {
+				t.Fatalf("default weight = %d", credential.Weight)
+			}
+			if fiveHour.Cadence == nil || *fiveHour.Cadence != "on_use" || weekly.Cadence == nil || *weekly.Cadence != "fixed" {
+				t.Fatalf("cadence = %+v", credential.Windows)
 			}
 			if fiveHour.Status != nil {
 				t.Fatalf("missing status should be null: %+v", fiveHour)

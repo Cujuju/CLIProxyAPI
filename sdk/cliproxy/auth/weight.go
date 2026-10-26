@@ -47,3 +47,8 @@ func ApplyAuthWeightMetadata(auth *Auth, metadata map[string]any) error {
 	auth.Attributes[AttributeWeight] = strconv.FormatInt(weight, 10)
 	return nil
 }
+
+// CredentialWeight is the weight weighted-round-robin routing uses; zero excludes the credential.
+func CredentialWeight(auth *Auth) int64 {
+	return authWeight(auth)
+}

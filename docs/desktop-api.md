@@ -83,12 +83,13 @@ time, 2s apart; a failing credential is retried after 15 minutes.
       "status_message": "",
       "priority": 0,
       "cooldown_until": null,
+      "weight": 1,
       "observed_at": "2026-10-25T12:00:00Z",
       "next_pick": true,
       "windows": [
-        {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "duration_seconds": 18000, "scoped": false},
-        {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "duration_seconds": 604800, "scoped": false},
-        {"key": "seven_day_fable", "label": "Weekly · Fable", "used_percent": 100, "resets_at": "2026-10-30T09:00:00Z", "status": "rejected", "duration_seconds": 604800, "scoped": true}
+        {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "duration_seconds": 18000, "scoped": false, "reset_cadence": "on_use"},
+        {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "duration_seconds": 604800, "scoped": false, "reset_cadence": "fixed"},
+        {"key": "seven_day_fable", "label": "Weekly · Fable", "used_percent": 100, "resets_at": "2026-10-30T09:00:00Z", "status": "rejected", "duration_seconds": 604800, "scoped": true, "reset_cadence": "fixed"}
       ]
     }
   ]
@@ -100,6 +101,7 @@ time, 2s apart; a failing credential is retried after 15 minutes.
 - `label` is the derived account label; `note` is the user-set note. `email`,
   `note` and `priority` are omitted when unset.
 - `cooldown_until` is when a benched credential becomes eligible again, else `null`.
+- `weight` is the credential's `weighted-round-robin` weight (default 1; 0 excludes it).
 - `observed_at` is the time of the latest usage snapshot, else `null`.
 - `next_pick` marks the credential the strategy would choose for a new
   conversation within its provider. Rotating strategies (`round-robin`) mark none.
@@ -109,7 +111,10 @@ time, 2s apart; a failing credential is retried after 15 minutes.
   `resets_at`, `status` and `duration_seconds` are `null` when unknown.
   `duration_seconds` is the window length. `scoped` is `true` for model-, feature-
   or spend-specific windows; only unscoped windows describe the whole account and
-  drive `soonest-reset` routing. Claude, Codex and Devin
+  drive `soonest-reset` routing. `reset_cadence` is `"fixed"` when the next period
+  starts at the reset (resets every `duration_seconds`), `"on_use"` when it starts
+  with the first request after the reset, and `null` when unknown (Codex, Devin).
+  Claude credentials report `on_use` for the 5-hour window and `fixed` for weekly ones. Claude, Codex and Devin
   credentials report windows; other providers return `[]`.
 
 ## POST /v8/management/usage/refresh

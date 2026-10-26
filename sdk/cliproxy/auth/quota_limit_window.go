@@ -29,7 +29,21 @@ type QuotaWindow struct {
 	// Scoped marks model-, feature- or spend-specific windows. Only unscoped
 	// windows describe the whole account and drive routing.
 	Scoped bool
+	// Cadence says when the next period starts after a reset.
+	Cadence ResetCadence
 }
+
+// ResetCadence says when a window's next period starts after it resets.
+type ResetCadence string
+
+const (
+	// ResetCadenceUnknown: the provider does not say.
+	ResetCadenceUnknown ResetCadence = ""
+	// ResetCadenceFixed: the next period starts at the reset, so resets come every Duration.
+	ResetCadenceFixed ResetCadence = "fixed"
+	// ResetCadenceOnUse: the next period starts with the first request after the reset.
+	ResetCadenceOnUse ResetCadence = "on_use"
+)
 
 const (
 	claudeUnifiedSignalPrefix = "Anthropic-Ratelimit-Unified-"
@@ -124,15 +138,17 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 
 func claudeWindowForToken(token string) *QuotaWindow {
 	switch token {
+	// Claude's session window starts with the first message. Weekly windows keep a
+	// fixed schedule: an unused scoped weekly window reports the account's weekly reset.
 	case claudeFiveHourToken:
-		return &QuotaWindow{Key: "five_hour", Label: "5-hour", Duration: fiveHourWindow}
+		return &QuotaWindow{Key: "five_hour", Label: "5-hour", Duration: fiveHourWindow, Cadence: ResetCadenceOnUse}
 	case claudeWeeklyToken:
-		return &QuotaWindow{Key: "seven_day", Label: "Weekly", Duration: weeklyWindow}
+		return &QuotaWindow{Key: "seven_day", Label: "Weekly", Duration: weeklyWindow, Cadence: ResetCadenceFixed}
 	case claudeWeeklyFableToken:
-		return &QuotaWindow{Key: "seven_day_fable", Label: "Weekly · Fable", Duration: weeklyWindow, Scoped: true}
+		return &QuotaWindow{Key: "seven_day_fable", Label: "Weekly · Fable", Duration: weeklyWindow, Scoped: true, Cadence: ResetCadenceFixed}
 	}
 	if scope, ok := strings.CutPrefix(token, claudeWeeklyToken+"_"); ok {
-		return &QuotaWindow{Key: "seven_day_" + scope, Label: "Weekly · " + humanizeWindowToken(scope), Duration: weeklyWindow, Scoped: true}
+		return &QuotaWindow{Key: "seven_day_" + scope, Label: "Weekly · " + humanizeWindowToken(scope), Duration: weeklyWindow, Scoped: true, Cadence: ResetCadenceFixed}
 	}
 	return &QuotaWindow{Key: token, Label: humanizeWindowToken(token), Scoped: true}
 }

@@ -36,6 +36,8 @@ type desktopUsageWindow struct {
 	DurationSeconds *int64 `json:"duration_seconds"`
 	// Scoped marks model-, feature- or spend-specific windows; only unscoped ones drive routing.
 	Scoped bool `json:"scoped"`
+	// ResetCadence is "fixed" or "on_use"; null when the provider does not say.
+	ResetCadence *string `json:"reset_cadence"`
 }
 
 type desktopUsageRefreshRequest struct {
@@ -160,6 +162,7 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		}
 		pick := nextPick[strings.ToLower(strings.TrimSpace(auth.Provider))]
 		credential["next_pick"] = pick != "" && pick == auth.ID
+		credential["weight"] = coreauth.CredentialWeight(auth)
 		credential["preferred"] = preferred[strings.ToLower(strings.TrimSpace(auth.Provider))] == auth.ID
 		credential["windows"] = desktopWindows(auth, now)
 		credentials = append(credentials, credential)
@@ -183,6 +186,10 @@ func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {
 		if window.Status != "" {
 			status := window.Status
 			item.Status = &status
+		}
+		if window.Cadence != coreauth.ResetCadenceUnknown {
+			cadence := string(window.Cadence)
+			item.ResetCadence = &cadence
 		}
 		out = append(out, item)
 	}
