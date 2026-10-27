@@ -120,6 +120,44 @@ func TestRefreshBacksOffAfterAFailure(t *testing.T) {
 	}
 }
 
+func TestRefreshRecordsUsageWindowsWithoutTraffic(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	f.body = `{"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false,` +
+		`"primary_window":{"used_percent":7,"limit_window_seconds":18000,"reset_after_seconds":10531,"reset_at":1793075116},` +
+		`"secondary_window":{"used_percent":3,"limit_window_seconds":604800,"reset_after_seconds":546196,"reset_at":1793610781}},` +
+		`"code_review_rate_limit":null}`
+	if failures := f.tracker.RefreshAll(context.Background()); len(failures) != 0 {
+		t.Fatalf("failures = %v", failures)
+	}
+	stored, _ := f.manager.GetByID("a")
+	windows := coreauth.QuotaWindows(stored, f.now)
+	if len(windows) != 2 {
+		t.Fatalf("windows = %+v", windows)
+	}
+	want := []struct {
+		percent  float64
+		duration time.Duration
+		resetsAt int64
+	}{{7, 5 * time.Hour, 1793075116}, {3, 7 * 24 * time.Hour, 1793610781}}
+	for i, w := range want {
+		got := windows[i]
+		if got.UsedPercent == nil || *got.UsedPercent != w.percent || got.Duration != w.duration || got.ResetsAt.Unix() != w.resetsAt {
+			t.Fatalf("window %d = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+func TestRefreshAllIgnoresStalenessAndSkipsIneligible(t *testing.T) {
+	disabled := codexOAuth("disabled")
+	disabled.Disabled = true
+	f := newFixture(t, codexOAuth("a"), disabled)
+	f.tracker.RefreshStale(context.Background())
+	f.tracker.RefreshAll(context.Background())
+	if f.calls["a"] != 2 || f.calls["disabled"] != 0 {
+		t.Fatalf("calls = %v", f.calls)
+	}
+}
+
 func TestResetCreditsOfReadsCountsAfterAJSONRoundTrip(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{availableKey: 2, applicableKey: 1, checkedAtKey: "2026-10-26T12:00:00Z"})
 	var metadata map[string]any

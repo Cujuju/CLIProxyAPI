@@ -75,7 +75,10 @@ func QuotaWindows(auth *Auth, now time.Time) []QuotaWindow {
 			claudeQuotaWindows(auth.Quota.LookupSignals), auth.Quota.LookedUpAt,
 		)
 	case "codex":
-		windows = codexQuotaWindows(auth.Quota.Signals, auth.Quota.ObservedAt)
+		windows = newestWindows(
+			codexQuotaWindows(auth.Quota.Signals, auth.Quota.ObservedAt), auth.Quota.ObservedAt,
+			codexQuotaWindows(auth.Quota.LookupSignals, auth.Quota.LookedUpAt), auth.Quota.LookedUpAt,
+		)
 	case "devin":
 		windows = devinQuotaWindows(auth.Quota.Signals)
 	}

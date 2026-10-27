@@ -188,7 +188,7 @@ func TestRefreshUsageWindowsValidation(t *testing.T) {
 		t.Fatalf("unknown index status = %d", rec.Code)
 	}
 	if rec := serveDesktop(t, h.RefreshUsageWindows, http.MethodPost, `{"auth_index":"idx-codex"}`, "127.0.0.1:1"); rec.Code != http.StatusBadRequest {
-		t.Fatalf("non-Claude status = %d", rec.Code)
+		t.Fatalf("Codex without a login status = %d", rec.Code)
 	}
 	if rec := serveDesktop(t, h.RefreshUsageWindows, http.MethodPost, `{`, "127.0.0.1:1"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body status = %d", rec.Code)

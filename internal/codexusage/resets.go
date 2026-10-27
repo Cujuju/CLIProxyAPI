@@ -1,4 +1,4 @@
-// Package codexusage looks up Codex account details that only ChatGPT's usage endpoint reports.
+// Package codexusage looks up a Codex account's usage windows and reset credits from ChatGPT's usage endpoint.
 package codexusage
 
 import (
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,8 @@ const (
 	checkedAtKey  = "reset_credits_checked_at"
 
 	accountIDHeader = "Chatgpt-Account-Id"
+
+	secondsPerMinute = 60
 )
 
 // usageURL is ChatGPT's account usage document, the one Codex's /status reads.
@@ -66,16 +69,68 @@ func ResetCreditsOf(auth *coreauth.Auth) (ResetCredits, bool) {
 
 // usageDocument is the part of the usage document the tracker reads.
 type usageDocument struct {
-	ResetCredits *struct {
+	RateLimit           *rateLimit `json:"rate_limit"`
+	CodeReviewRateLimit *rateLimit `json:"code_review_rate_limit"`
+	ResetCredits        *struct {
 		Available  int `json:"available_count"`
 		Applicable int `json:"applicable_available_count"`
 	} `json:"rate_limit_reset_credits"`
 }
 
+type rateLimit struct {
+	Allowed         *bool        `json:"allowed"`
+	LimitReached    *bool        `json:"limit_reached"`
+	PrimaryWindow   *usageWindow `json:"primary_window"`
+	SecondaryWindow *usageWindow `json:"secondary_window"`
+}
+
+type usageWindow struct {
+	UsedPercent        *float64 `json:"used_percent"`
+	LimitWindowSeconds int64    `json:"limit_window_seconds"`
+	ResetAt            int64    `json:"reset_at"`
+}
+
+// quotaHeaders restates the document's windows as the X-Codex-* headers Codex responses carry,
+// so a lookup and live traffic feed the same quota windows.
+func (doc usageDocument) quotaHeaders() http.Header {
+	headers := http.Header{}
+	addRateLimitHeaders(headers, "X-Codex-", doc.RateLimit)
+	addRateLimitHeaders(headers, "X-Codex-Code-Review-", doc.CodeReviewRateLimit)
+	return headers
+}
+
+func addRateLimitHeaders(headers http.Header, prefix string, limit *rateLimit) {
+	if limit == nil {
+		return
+	}
+	if limit.Allowed != nil {
+		headers.Set(prefix+"Allowed", strconv.FormatBool(*limit.Allowed))
+	}
+	if limit.LimitReached != nil {
+		headers.Set(prefix+"Limit-Reached", strconv.FormatBool(*limit.LimitReached))
+	}
+	addWindowHeaders(headers, prefix+"Primary-", limit.PrimaryWindow)
+	addWindowHeaders(headers, prefix+"Secondary-", limit.SecondaryWindow)
+}
+
+// addWindowHeaders skips a window missing its usage, length or reset, as the traffic parser does.
+func addWindowHeaders(headers http.Header, prefix string, window *usageWindow) {
+	minutes := int64(0)
+	if window != nil {
+		minutes = window.LimitWindowSeconds / secondsPerMinute
+	}
+	if window == nil || window.UsedPercent == nil || minutes <= 0 || window.ResetAt <= 0 {
+		return
+	}
+	headers.Set(prefix+"Used-Percent", strconv.FormatFloat(*window.UsedPercent, 'f', -1, 64))
+	headers.Set(prefix+"Window-Minutes", strconv.FormatInt(minutes, 10))
+	headers.Set(prefix+"Reset-At", strconv.FormatInt(window.ResetAt, 10))
+}
+
 // FetchFunc returns the raw usage document for one credential.
 type FetchFunc func(ctx context.Context, cfg *config.Config, auth *coreauth.Auth) ([]byte, error)
 
-// Tracker keeps Codex credentials' reset credits current.
+// Tracker keeps Codex credentials' usage windows and reset credits current.
 type Tracker struct {
 	manager *coreauth.Manager
 	config  func() *config.Config
@@ -125,7 +180,30 @@ func (t *Tracker) RefreshStale(ctx context.Context) {
 	}
 }
 
-// Refresh looks up one credential now and stores its reset credits on the credential.
+// RefreshAll looks up every eligible credential now, ignoring staleness and backoff.
+// Errors are returned per credential ID.
+func (t *Tracker) RefreshAll(ctx context.Context) map[string]error {
+	failures := map[string]error{}
+	first := true
+	for _, auth := range t.manager.List() {
+		if !Eligible(auth) {
+			continue
+		}
+		if !first {
+			t.wait(ctx)
+		}
+		first = false
+		if ctx.Err() != nil {
+			return failures
+		}
+		if errRefresh := t.Refresh(ctx, auth); errRefresh != nil {
+			failures[auth.ID] = errRefresh
+		}
+	}
+	return failures
+}
+
+// Refresh looks up one credential now, records its usage windows and stores its reset credits.
 func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	lookupCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
@@ -138,7 +216,9 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 		t.setBackoff(auth.ID, t.now().Add(MaxAge))
 		return errFetch
 	}
-	checkedAt := t.now().UTC().Format(time.RFC3339)
+	lookedUpAt := t.now()
+	t.manager.ObserveQuotaLookup(auth.ID, doc.quotaHeaders(), lookedUpAt)
+	checkedAt := lookedUpAt.UTC().Format(time.RFC3339)
 	_, _, errModify := t.manager.Modify(ctx, auth.ID, 0, func(current *coreauth.Auth) error {
 		if current.Metadata == nil {
 			current.Metadata = map[string]any{}

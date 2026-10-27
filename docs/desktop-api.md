@@ -136,7 +136,7 @@ the proxy renews the token.
   session usage relative to Claude Pro, read from the tier (`..._5x` = 5) or 1 for
   Pro; `null` when unpublished (Team, Enterprise, every Codex plan).
 - `reset_credits` are a Codex account's rate-limit reset credits from ChatGPT's
-  usage document, looked up every 15 minutes:
+  usage document, looked up every 15 minutes (the same lookup records its windows):
   `{"available": 1, "applicable": 0, "checked_at": "2026-10-26T12:00:00Z"}`.
   `available` is how many the account holds; `applicable` is how many can be
   used now, against a limit it has reached. `null` before the first lookup, when
@@ -163,13 +163,15 @@ the proxy renews the token.
 
 ## POST /v8/management/usage/refresh
 
-Body `{"auth_index": "3f2a9c"}` refreshes one Claude credential; an empty body
-refreshes every enabled Claude OAuth credential (2s apart, so this can take a
-while with many accounts). Returns the same shape as `GET /usage/windows`, plus
+Body `{"auth_index": "3f2a9c"}` refreshes one Claude or Codex credential; an empty
+body refreshes every enabled Claude and Codex OAuth credential (2s apart, so this
+can take a while with many accounts). A Codex lookup reads ChatGPT's usage
+document, so its windows and reset credits show without any Codex traffic.
+Returns the same shape as `GET /usage/windows`, plus
 `"errors": {"<id>": "<message>"}` when a lookup failed.
 
 - `404` unknown `auth_index`.
-- `400` the credential is not an enabled Claude OAuth credential, or the body is invalid.
+- `400` the credential is not an enabled Claude or Codex OAuth credential, or the body is invalid.
 
 ## POST /v8/management/usage/reset-credit
 

@@ -67,7 +67,9 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	poller := claudeusage.NewPoller(h.authManager, func() *config.Config { return h.configSnapshot() })
+	cfg := func() *config.Config { return h.configSnapshot() }
+	poller := claudeusage.NewPoller(h.authManager, cfg)
+	tracker := codexusage.NewTracker(h.authManager, cfg)
 	failures := map[string]string{}
 	if authIndex := strings.TrimSpace(body.AuthIndex); authIndex != "" {
 		auth := h.authByIndex(authIndex)
@@ -75,15 +77,24 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 			return
 		}
-		if !claudeusage.Eligible(auth) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "usage lookup supports enabled Claude OAuth credentials only"})
+		var errRefresh error
+		switch {
+		case claudeusage.Eligible(auth):
+			errRefresh = poller.Refresh(c.Request.Context(), auth)
+		case codexusage.Eligible(auth):
+			errRefresh = tracker.Refresh(c.Request.Context(), auth)
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "usage lookup supports enabled Claude and Codex OAuth credentials only"})
 			return
 		}
-		if errRefresh := poller.Refresh(c.Request.Context(), auth); errRefresh != nil {
+		if errRefresh != nil {
 			failures[auth.ID] = errRefresh.Error()
 		}
 	} else {
 		for id, errRefresh := range poller.RefreshAll(c.Request.Context()) {
+			failures[id] = errRefresh.Error()
+		}
+		for id, errRefresh := range tracker.RefreshAll(c.Request.Context()) {
 			failures[id] = errRefresh.Error()
 		}
 	}
