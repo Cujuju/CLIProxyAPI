@@ -27,7 +27,7 @@ func TestSubscriptionFallbackReturnsFromAPIKeyAfterRecovery(t *testing.T) {
 				model := provider + "-model"
 				manager := NewManager(nil, nil, nil)
 				cfg := &config.Config{}
-				cfg.Routing.PreferOAuth = true
+				cfg.Routing.PreferAuthKind = "oauth"
 				manager.SetConfig(cfg)
 				var selector Selector = &RoundRobinSelector{}
 				if affinityEnabled {
@@ -86,10 +86,45 @@ func TestSubscriptionFallbackReturnsFromAPIKeyAfterRecovery(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPreferenceFallsBackToSubscriptionAndReturns(t *testing.T) {
+	ctx := context.Background()
+	provider := "api-key-first"
+	model := provider + "-model"
+	manager := NewManager(nil, nil, nil)
+	cfg := &config.Config{}
+	cfg.Routing.PreferAuthKind = "api-key"
+	manager.SetConfig(cfg)
+	manager.SetSelector(&RoundRobinSelector{})
+	manager.RegisterExecutor(schedulerTestExecutor{provider: provider})
+	for _, auth := range []*Auth{
+		{ID: provider + "-subscription", Provider: provider, Status: StatusActive, Attributes: map[string]string{"auth_kind": "oauth", "priority": "20"}},
+		{ID: provider + "-key", Provider: provider, Status: StatusActive, Attributes: map[string]string{"api_key": "test-key"}},
+	} {
+		if _, err := manager.Register(WithSkipPersist(ctx), auth); err != nil {
+			t.Fatal(err)
+		}
+		registry.GetGlobalRegistry().RegisterClient(auth.ID, provider, []*registry.ModelInfo{{ID: model}})
+		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	}
+	assertPick := func(want string) {
+		t.Helper()
+		auth, _, err := manager.pickNext(ctx, provider, model, cliproxyexecutor.Options{}, nil)
+		if err != nil || auth == nil || auth.ID != provider+want {
+			t.Fatalf("picked %v (%v), want %s", auth, err, provider+want)
+		}
+	}
+	assertPick("-key")
+	manager.MarkResult(ctx, Result{AuthID: provider + "-key", Provider: provider, Model: model,
+		Error: &Error{HTTPStatus: http.StatusTooManyRequests, Message: "quota"}})
+	assertPick("-subscription")
+	expireSessionAffinityPriorityModelCooldown(t, manager, provider+"-key", model)
+	assertPick("-key")
+}
+
 func TestSubscriptionPreferenceIgnoresZeroWeightOAuth(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	cfg := &config.Config{}
-	cfg.Routing.PreferOAuth = true
+	cfg.Routing.PreferAuthKind = "oauth"
 	manager.SetConfig(cfg)
 	auths := []*Auth{
 		{ID: "subscription", Provider: "test", Attributes: map[string]string{"auth_kind": "oauth", "weight": "0"}},

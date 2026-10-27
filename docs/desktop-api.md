@@ -63,11 +63,12 @@ until it recovers, after which it ranks again. Pair it with
 `routing.session-affinity: true` so a conversation stays on its account and
 only new conversations move to the soonest-resetting one.
 
-`routing.prefer-oauth: true` uses available subscription credentials before API
-keys. When subscriptions are unavailable, requests fall back to API keys. A
-recovered subscription takes the next request even in a conversation bound to
-an API key. Explicit credential pins still take precedence. This is off by
-default; Spillway enables it.
+`routing.prefer-auth-kind: oauth` uses available subscription credentials
+before API keys; `api-key` uses API keys first. When no credential of the
+preferred kind is available, requests fall back to the other kind. A recovered
+preferred credential takes the next request even in a conversation bound to a
+fallback. Explicit credential pins still take precedence. Unset mixes both
+kinds; Spillway sets it from its "API keys" routing setting.
 
 Set `disabled: true` on an individual entry under `api-keys.<family>[].keys`
 to stop routing to that key without deleting it. Remove the flag or set it to

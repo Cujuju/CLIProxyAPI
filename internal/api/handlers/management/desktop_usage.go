@@ -132,9 +132,9 @@ func isLoopbackRequest(c *gin.Context) bool {
 
 func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 	strategy := ""
-	preferOAuth := false
+	preferredKind := ""
 	if cfg := h.configSnapshot(); cfg != nil {
-		preferOAuth = cfg.Routing.PreferOAuth
+		preferredKind = coreauth.NormalizeAuthKind(cfg.Routing.PreferAuthKind)
 		strategy = strings.TrimSpace(cfg.Routing.Strategy)
 		if normalized, ok := normalizeRoutingStrategy(strategy); ok {
 			strategy = normalized
@@ -153,14 +153,14 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 			nextPick[provider] = pick
 			continue
 		}
-		if preferOAuth {
-			var subscriptions []*coreauth.Auth
+		if preferredKind != "" {
+			var preferredGroup []*coreauth.Auth
 			for _, auth := range group {
-				if auth.AuthKind() == coreauth.AuthKindOAuth {
-					subscriptions = append(subscriptions, auth)
+				if auth.AuthKind() == preferredKind {
+					preferredGroup = append(preferredGroup, auth)
 				}
 			}
-			if pick := coreauth.PreviewNextPick(strategy, subscriptions, now); pick != "" {
+			if pick := coreauth.PreviewNextPick(strategy, preferredGroup, now); pick != "" {
 				nextPick[provider] = pick
 				continue
 			}

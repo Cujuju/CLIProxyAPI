@@ -34,10 +34,10 @@ func (a *Auth) AuthKind() string {
 	if IsCodexUseSIWC(a) {
 		return AuthKindOAuth
 	}
-	if kind := normalizeAuthKind(authAttribute(a, AttributeAuthKind)); kind != "" {
+	if kind := NormalizeAuthKind(authAttribute(a, AttributeAuthKind)); kind != "" {
 		return kind
 	}
-	if kind := normalizeAuthKind(authMetadataString(a, AttributeAuthKind)); kind != "" {
+	if kind := NormalizeAuthKind(authMetadataString(a, AttributeAuthKind)); kind != "" {
 		return kind
 	}
 	if authAttribute(a, AttributeAPIKey) != "" {
@@ -80,7 +80,8 @@ func (a *Auth) AuthSourceKind() string {
 	return ""
 }
 
-func normalizeAuthKind(kind string) string {
+// NormalizeAuthKind maps kind spellings to AuthKindAPIKey or AuthKindOAuth, else "".
+func NormalizeAuthKind(kind string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case AuthKindAPIKey, "api_key", "api-key":
 		return AuthKindAPIKey

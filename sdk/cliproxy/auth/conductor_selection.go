@@ -630,9 +630,9 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 // or scheduler additionally receives lower priority tiers.
 func (m *Manager) availableAuthsForSelector(selector Selector, auths []*Auth, provider, routeModel string, now time.Time, schedulerAcross bool) (priorityAuths, selectorAuths []*Auth, err error) {
 	_, sessionAffinity := selector.(*SessionAffinitySelector)
-	preferOAuth := m.prefersOAuth()
+	preferredKind := m.preferredAuthKind()
 
-	if !sessionAffinity && !schedulerAcross && !preferOAuth {
+	if !sessionAffinity && !schedulerAcross && preferredKind == "" {
 		priorityAuths, err = m.availableAuthsForRouteModel(auths, provider, routeModel, now)
 		if err != nil {
 			return nil, nil, err
@@ -648,21 +648,21 @@ func (m *Manager) availableAuthsForSelector(selector Selector, auths []*Auth, pr
 		return nil, nil, errAcross
 	}
 	allAuths = cloneAuthSlice(allAuths)
-	if preferOAuth {
-		// Filter before affinity lookup so a recovered subscription replaces an API-key binding.
+	if preferredKind != "" {
+		// Filter before affinity lookup so a recovered preferred credential replaces a fallback binding.
 		weightSelector := selector
 		if affinity, ok := selector.(*SessionAffinitySelector); ok {
 			weightSelector = affinity.fallback
 		}
 		_, weighted := weightSelector.(*WeightedRoundRobinSelector)
-		var oauth []*Auth
+		var preferred []*Auth
 		for _, auth := range allAuths {
-			if auth.AuthKind() == AuthKindOAuth && (!weighted || CredentialWeight(auth) > 0) {
-				oauth = append(oauth, auth)
+			if auth.AuthKind() == preferredKind && (!weighted || CredentialWeight(auth) > 0) {
+				preferred = append(preferred, auth)
 			}
 		}
-		if len(oauth) > 0 {
-			allAuths = oauth
+		if len(preferred) > 0 {
+			allAuths = preferred
 		}
 	}
 
@@ -1753,15 +1753,19 @@ func (m *Manager) CloseExecutionSession(sessionID string) {
 }
 
 func (m *Manager) useSchedulerFastPath() bool {
-	if m == nil || m.scheduler == nil || m.prefersOAuth() {
+	if m == nil || m.scheduler == nil || m.preferredAuthKind() != "" {
 		return false
 	}
 	return isBuiltInSelector(m.Selector())
 }
 
-func (m *Manager) prefersOAuth() bool {
+// preferredAuthKind is the normalized routing.prefer-auth-kind, or "" when kinds mix.
+func (m *Manager) preferredAuthKind() string {
 	cfg, _ := m.runtimeConfig.Load().(*config.Config)
-	return cfg != nil && cfg.Routing.PreferOAuth
+	if cfg == nil {
+		return ""
+	}
+	return NormalizeAuthKind(cfg.Routing.PreferAuthKind)
 }
 
 func shouldRetrySchedulerPick(err error) bool {
@@ -1969,7 +1973,7 @@ func (m *Manager) SelectAuthByKind(ctx context.Context, provider, model, require
 	if m != nil && m.HomeEnabled() {
 		return nil, &Error{Code: "home_unavailable", Message: "legacy auth selection is unavailable while Home is enabled", HTTPStatus: http.StatusServiceUnavailable}
 	}
-	requiredKind = normalizeAuthKind(requiredKind)
+	requiredKind = NormalizeAuthKind(requiredKind)
 	if requiredKind == "" {
 		return nil, &Error{Code: "invalid_auth_kind", Message: "required auth kind is invalid", HTTPStatus: http.StatusBadRequest}
 	}
@@ -2066,7 +2070,7 @@ func (m *Manager) SelectHomeAuthWithCredentialPolicy(ctx context.Context, provid
 
 // SelectHomeAuthByKind selects a Home dispatch while retaining its execution scope.
 func (m *Manager) SelectHomeAuthByKind(ctx context.Context, provider string, model string, requiredKind string, opts cliproxyexecutor.Options) (*HomeDispatchSelection, error) {
-	requiredKind = normalizeAuthKind(requiredKind)
+	requiredKind = NormalizeAuthKind(requiredKind)
 	if requiredKind == "" {
 		return nil, &Error{Code: "invalid_auth_kind", Message: "required auth kind is invalid", HTTPStatus: http.StatusBadRequest}
 	}

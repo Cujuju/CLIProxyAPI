@@ -415,8 +415,9 @@ type QuotaExceeded struct {
 
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
-	// PreferOAuth uses subscription credentials before API keys, including after a subscription recovers.
-	PreferOAuth bool `yaml:"prefer-oauth,omitempty" json:"prefer-oauth,omitempty"`
+	// PreferAuthKind ("oauth" or "api-key") routes to available credentials of that kind first,
+	// including after one recovers, and falls back to the other kind. Empty mixes both.
+	PreferAuthKind string `yaml:"prefer-auth-kind,omitempty" json:"prefer-auth-kind,omitempty"`
 	// Strategy selects the credential selection strategy.
 	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first", "soonest-reset".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
