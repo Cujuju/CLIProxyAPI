@@ -280,11 +280,29 @@ Hosts such as T3 Code schedule a resume from these.
 
 With `chatgpt_base_url = "http://<proxy>/backend-api/"`, Codex sends its
 ChatGPT account calls (`/wham/usage`, rate-limit reset credits, plugins, tasks)
-here. Any `/backend-api/` path that no model route claims is forwarded to
-`https://chatgpt.com` as one pooled Codex account: the one new requests route
-to (preferred credential, then the routing strategy), or the one that
-recovers first when all are spent. The proxy replaces `Authorization` and
-`Chatgpt-Account-Id` with that account's, and strips the client key.
+here. Those calls are forwarded to `https://chatgpt.com` as one pooled Codex
+account: the one new requests route to (preferred credential, then the routing
+strategy), or the one that recovers first when all are spent. The proxy
+replaces `Authorization` and `Chatgpt-Account-Id` with that account's, strips
+the client key, and drops cookies both ways.
+
+Only the paths Codex calls are forwarded (`codexAccountRoutes` in
+`codex_backend_paths.go`, taken from codex-rs `rust-v0.164.0`):
+
+| Path under `/backend-api/` | Methods |
+|---|---|
+| `wham/…` (usage, plan, reset credits, cloud tasks, environments, settings) | any |
+| `codex/…` not claimed by a model route (model list, analytics) | any |
+| `ps/plugins/…`, `ps/apps/batch`, `plugins/featured`, `public/plugins/workspace/…` | any |
+| `connectors/directory/list`, `connectors/directory/list_workspace` | any |
+| `accounts/verified_access` | `GET` |
+| `files`, `files/…` (upload only) | `POST` |
+
+Anything else (conversations, memories, account admin, file downloads, the
+apps MCP) answers `404` without reaching chatgpt.com and logs a warning naming
+the path. Paths with dot segments, doubled slashes, percent-escapes or
+backslashes are refused too. A new Codex release that adds an account call
+shows up as that warning; add its path to the list.
 
 The caller authenticates with a client key (`access.api-keys`). Codex sends its
 `auth.json` access token, so that token must be a client key; Codex then needs
@@ -312,7 +330,8 @@ A client that disconnects before chatgpt.com answers gets `499`, not `502`.
 
 Codex's apps MCP (`/backend-api/ps/mcp`) receives no credential: Codex sends its
 ChatGPT token to an apps MCP server only on chatgpt.com, so through the proxy
-those calls answer `401`. Codex's other features are unaffected.
+those calls answer `401` (`404` with a client key: the proxy never hands the
+pool token to connected apps). Codex's other features are unaffected.
 
 ## Claude Code connectivity check
 

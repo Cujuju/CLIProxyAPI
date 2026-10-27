@@ -32,10 +32,16 @@ var (
 
 // CodexBackend forwards Codex's ChatGPT account calls (usage, plan, plugins, tasks) to chatgpt.com
 // as the pool's routed Codex account, so Codex needs no ChatGPT login of its own.
-// The caller authenticates with a client key first.
+// The caller authenticates with a client key first; only codexAccountRoutes are forwarded.
 func (h *Handler) CodexBackend(c *gin.Context) {
 	if h == nil || h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return
+	}
+	if !codexAccountCallAllowed(c.Request) {
+		// Logged so a new Codex release's account call shows up here rather than failing silently.
+		log.WithField("method", c.Request.Method).WithField("path", c.Request.URL.Path).Warn("codex backend: refused a path outside Codex's account calls")
+		c.JSON(http.StatusNotFound, gin.H{"error": "not a Codex account call"})
 		return
 	}
 	auth := h.codexAccountAuth(time.Now())
@@ -54,6 +60,8 @@ func (h *Handler) CodexBackend(c *gin.Context) {
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(origin)
 			r.Out.Header.Set("Authorization", "Bearer "+token)
+			// Cookies would tie the client to the pool account's chatgpt.com session.
+			r.Out.Header.Del("Cookie")
 			for _, name := range clientKeyHeaders {
 				r.Out.Header.Del(name)
 			}
@@ -73,6 +81,7 @@ func (h *Handler) CodexBackend(c *gin.Context) {
 		// A 401 here means the pool's credential failed. Codex would answer a 401 by
 		// refreshing its own login, which the proxy holds no refresh token for.
 		ModifyResponse: func(resp *http.Response) error {
+			resp.Header.Del("Set-Cookie")
 			if resp.StatusCode == http.StatusUnauthorized {
 				resp.StatusCode = http.StatusBadGateway
 				resp.Status = http.StatusText(http.StatusBadGateway)
