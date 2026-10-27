@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	codexlogin "github.com/router-for-me/CLIProxyAPI/v8/internal/access/codex_login"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
@@ -245,7 +246,6 @@ func (b *Builder) Build() (*Service, error) {
 		pluginHost.ApplyConfig(context.Background(), b.cfg)
 		pluginHost.RegisterFrontendAuthProviders()
 	}
-	accessManager.SetProviders(sdkaccess.RegisteredProviders())
 
 	coreManager := b.coreManager
 	cooldownStateStore := b.cooldownStateStore
@@ -275,6 +275,9 @@ func (b *Builder) Build() (*Service, error) {
 	if b.resultPolicy != nil {
 		coreManager.SetResultPolicy(b.resultPolicy)
 	}
+	codexlogin.Configure(codexCredentialFinder(coreManager))
+	codexlogin.Sync(&b.cfg.SDKConfig)
+	accessManager.SetProviders(sdkaccess.RegisteredProviders())
 
 	service := &Service{
 		cfg:                 b.cfg.CloneForRuntime(),
