@@ -63,6 +63,16 @@ until it recovers, after which it ranks again. Pair it with
 `routing.session-affinity: true` so a conversation stays on its account and
 only new conversations move to the soonest-resetting one.
 
+`routing.prefer-oauth: true` uses available subscription credentials before API
+keys. When subscriptions are unavailable, requests fall back to API keys. A
+recovered subscription takes the next request even in a conversation bound to
+an API key. Explicit credential pins still take precedence. This is off by
+default; Spillway enables it.
+
+Set `disabled: true` on an individual entry under `api-keys.<family>[].keys`
+to stop routing to that key without deleting it. Remove the flag or set it to
+false to re-enable it. The key retains its credential identity across changes.
+
 Read and write through the v8 config API (writes accept an optional
 `If-Match: <ETag from the GET>`):
 
@@ -89,6 +99,12 @@ expired access token is not a failure: the lookup is retried 10s later, after
 the proxy renews the token.
 
 ## GET /v8/management/usage/windows
+
+Includes config-backed API keys, including disabled keys. Their `api_key`
+field contains `{ "masked": "sk-a…1234", "success": 7, "failed": 2 }`;
+counts are since the proxy started. Raw keys are never returned by this route.
+Keys without observed quota have an empty `windows` array. Subscription-only
+usage lookup and login renewal do not apply to API keys.
 
 ```json
 {

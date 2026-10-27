@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,7 +132,9 @@ func isLoopbackRequest(c *gin.Context) bool {
 
 func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 	strategy := ""
+	preferOAuth := false
 	if cfg := h.configSnapshot(); cfg != nil {
+		preferOAuth = cfg.Routing.PreferOAuth
 		strategy = strings.TrimSpace(cfg.Routing.Strategy)
 		if normalized, ok := normalizeRoutingStrategy(strategy); ok {
 			strategy = normalized
@@ -150,6 +153,18 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 			nextPick[provider] = pick
 			continue
 		}
+		if preferOAuth {
+			var subscriptions []*coreauth.Auth
+			for _, auth := range group {
+				if auth.AuthKind() == coreauth.AuthKindOAuth {
+					subscriptions = append(subscriptions, auth)
+				}
+			}
+			if pick := coreauth.PreviewNextPick(strategy, subscriptions, now); pick != "" {
+				nextPick[provider] = pick
+				continue
+			}
+		}
 		nextPick[provider] = coreauth.PreviewNextPick(strategy, group, now)
 	}
 	// Codex's account calls under /backend-api/ reach this credential; clients name their pool login after it.
@@ -159,7 +174,7 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 	}
 	credentials := make([]gin.H, 0, len(auths))
 	for _, auth := range auths {
-		entry := h.buildAuthFileEntry(auth, authFileQuotaContext{v8: true})
+		entry := h.desktopCredentialEntry(auth, now)
 		if entry == nil {
 			continue
 		}
@@ -168,6 +183,9 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 			if value, ok := entry[key]; ok {
 				credential[key] = value
 			}
+		}
+		if apiKey, ok := entry["api_key"]; ok {
+			credential["api_key"] = apiKey
 		}
 		credential["cooldown_until"] = nil
 		if until, ok := coreauth.CredentialCooldownUntil(auth, now); ok {
@@ -188,6 +206,31 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		credentials = append(credentials, credential)
 	}
 	return gin.H{"strategy": strategy, "credentials": credentials}
+}
+
+// Config-backed keys have no login file. Publish only display fields, never their raw account value.
+func (h *Handler) desktopCredentialEntry(auth *coreauth.Auth, now time.Time) gin.H {
+	kind, key := auth.AccountInfo()
+	if !strings.EqualFold(strings.TrimSpace(kind), "api_key") {
+		return h.buildAuthFileEntry(auth, authFileQuotaContext{v8: true})
+	}
+	auth.EnsureIndex()
+	_, status, message, _ := reconcileAuthFileCooldownState(auth, now)
+	masked := "••••"
+	if len(key) >= 12 {
+		masked = key[:4] + "…" + key[len(key)-4:]
+	}
+	if key != "" {
+		message = strings.ReplaceAll(message, key, masked)
+	}
+	priority, _ := strconv.Atoi(auth.Attributes["priority"])
+	return gin.H{
+		"id": auth.ID, "auth_index": auth.Index, "name": auth.ID,
+		"provider": auth.Provider, "label": auth.Label,
+		"disabled": auth.Disabled, "status": status, "status_message": message,
+		"priority": priority,
+		"api_key":  gin.H{"masked": masked, "success": auth.Success, "failed": auth.Failed},
+	}
 }
 
 // desktopPlan is the credential's subscription plan: Claude's from the profile lookup, Codex's

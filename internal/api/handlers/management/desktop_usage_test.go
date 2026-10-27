@@ -28,7 +28,12 @@ type desktopUsageResponse struct {
 		ObservedAt    *time.Time `json:"observed_at"`
 		CooldownUntil *time.Time `json:"cooldown_until"`
 		Weight        int64      `json:"weight"`
-		Plan          *struct {
+		APIKey        *struct {
+			Masked  string `json:"masked"`
+			Success int64  `json:"success"`
+			Failed  int64  `json:"failed"`
+		} `json:"api_key"`
+		Plan *struct {
 			Label      string   `json:"label"`
 			Multiplier *float64 `json:"multiplier"`
 		} `json:"plan"`

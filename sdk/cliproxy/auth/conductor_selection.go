@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -629,8 +630,9 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 // or scheduler additionally receives lower priority tiers.
 func (m *Manager) availableAuthsForSelector(selector Selector, auths []*Auth, provider, routeModel string, now time.Time, schedulerAcross bool) (priorityAuths, selectorAuths []*Auth, err error) {
 	_, sessionAffinity := selector.(*SessionAffinitySelector)
+	preferOAuth := m.prefersOAuth()
 
-	if !sessionAffinity && !schedulerAcross {
+	if !sessionAffinity && !schedulerAcross && !preferOAuth {
 		priorityAuths, err = m.availableAuthsForRouteModel(auths, provider, routeModel, now)
 		if err != nil {
 			return nil, nil, err
@@ -646,6 +648,23 @@ func (m *Manager) availableAuthsForSelector(selector Selector, auths []*Auth, pr
 		return nil, nil, errAcross
 	}
 	allAuths = cloneAuthSlice(allAuths)
+	if preferOAuth {
+		// Filter before affinity lookup so a recovered subscription replaces an API-key binding.
+		weightSelector := selector
+		if affinity, ok := selector.(*SessionAffinitySelector); ok {
+			weightSelector = affinity.fallback
+		}
+		_, weighted := weightSelector.(*WeightedRoundRobinSelector)
+		var oauth []*Auth
+		for _, auth := range allAuths {
+			if auth.AuthKind() == AuthKindOAuth && (!weighted || CredentialWeight(auth) > 0) {
+				oauth = append(oauth, auth)
+			}
+		}
+		if len(oauth) > 0 {
+			allAuths = oauth
+		}
+	}
 
 	if schedulerAcross {
 		priorityAuths = allAuths
@@ -1734,10 +1753,15 @@ func (m *Manager) CloseExecutionSession(sessionID string) {
 }
 
 func (m *Manager) useSchedulerFastPath() bool {
-	if m == nil || m.scheduler == nil {
+	if m == nil || m.scheduler == nil || m.prefersOAuth() {
 		return false
 	}
 	return isBuiltInSelector(m.Selector())
+}
+
+func (m *Manager) prefersOAuth() bool {
+	cfg, _ := m.runtimeConfig.Load().(*config.Config)
+	return cfg != nil && cfg.Routing.PreferOAuth
 }
 
 func shouldRetrySchedulerPick(err error) bool {
