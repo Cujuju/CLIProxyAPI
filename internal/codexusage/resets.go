@@ -140,11 +140,14 @@ type Tracker struct {
 
 	mu      sync.Mutex
 	backoff map[string]time.Time
+	// lookedUp is each credential's last successful lookup by this process. Usage windows live
+	// only in memory, so a lookup saved before a restart does not count as fresh.
+	lookedUp map[string]time.Time
 }
 
 // NewTracker builds a tracker over manager. cfg supplies the live config.
 func NewTracker(manager *coreauth.Manager, cfg func() *config.Config) *Tracker {
-	return &Tracker{manager: manager, config: cfg, fetch: fetchUsage, now: time.Now, spacing: requestSpacing, backoff: map[string]time.Time{}}
+	return &Tracker{manager: manager, config: cfg, fetch: fetchUsage, now: time.Now, spacing: requestSpacing, backoff: map[string]time.Time{}, lookedUp: map[string]time.Time{}}
 }
 
 // Run refreshes stale credentials immediately and then every CheckInterval until ctx ends.
@@ -235,6 +238,9 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	})
 	if errModify == nil {
 		t.setBackoff(auth.ID, time.Time{})
+		t.mu.Lock()
+		t.lookedUp[auth.ID] = lookedUpAt
+		t.mu.Unlock()
 	}
 	return errModify
 }
@@ -251,8 +257,10 @@ func Eligible(auth *coreauth.Auth) bool {
 }
 
 func (t *Tracker) isStale(auth *coreauth.Auth) bool {
-	checkedAt, errParse := time.Parse(time.RFC3339, metadataString(auth, checkedAtKey))
-	return errParse != nil || t.now().Sub(checkedAt) > MaxAge
+	t.mu.Lock()
+	lookedUpAt, ok := t.lookedUp[auth.ID]
+	t.mu.Unlock()
+	return !ok || t.now().Sub(lookedUpAt) > MaxAge
 }
 
 func (t *Tracker) inBackoff(authID string) bool {

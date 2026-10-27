@@ -87,6 +87,17 @@ func TestRefreshStaleLooksUpOnlyStaleCodexLogins(t *testing.T) {
 	}
 }
 
+func TestRefreshStaleLooksUpOnBootDespiteASavedLookup(t *testing.T) {
+	saved := codexOAuth("a")
+	// A lookup saved by the previous run a minute before the fixture's clock; its windows were in memory and are gone.
+	saved.Metadata[checkedAtKey] = "2026-10-26T11:59:00Z"
+	f := newFixture(t, saved)
+	f.tracker.RefreshStale(context.Background())
+	if f.calls["a"] != 1 {
+		t.Fatalf("boot pass skipped a credential with a saved lookup: %v", f.calls)
+	}
+}
+
 func TestRefreshClearsCreditsTheAccountNoLongerReports(t *testing.T) {
 	f := newFixture(t, codexOAuth("a"))
 	f.tracker.RefreshStale(context.Background())
