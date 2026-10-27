@@ -1,38 +1,18 @@
 # Desktop supervisor API
 
-Endpoints and flags for a desktop app that launches the proxy, shows per-account
-usage, and stops it. All routes sit under `/v8/management` and use the normal
-management authentication: `Authorization: Bearer <key>` or `X-Management-Key: <key>`.
+Routes for a desktop app that launches the proxy, shows per-account usage and
+stops it. All sit under `/v8/management` and take the management key as
+`Authorization: Bearer <key>` or `X-Management-Key: <key>`.
 
-## Enabling management for a local supervisor
+## Management key
 
-Recommended: start the proxy with `MANAGEMENT_SUPERVISOR_PASSWORD` set to a fresh
-random value of at least 32 characters. The proxy reads it once, clears it from
-its own environment (plugins and child processes never see it), and accepts it
-only from loopback. It skips the failed-attempt IP ban: every local process
-shares 127.0.0.1, so another program sending wrong keys would otherwise lock
-the supervisor out. Wrong keys are still counted and banned as
-usual. No key is written to `config.yaml`, so the proxy never rewrites one.
-
-## Failed management keys
-
-Wrong keys are counted per client IP. 5 failures lock that IP out of management
-for 5 minutes (`403`). After a lockout, 3 more failures lock it out for 30
-minutes, and every later lockout is 30 minutes. A correct key, or 2 hours
-without a request, returns the IP to the first step.
-
-A proxy client key (`access.api-keys`) sent as the management key gets `401`
-with `this is a client API key; management calls need the management key` and
-does not count: it is a setup mix-up, not a guess.
-
-- `GET /v8/management/server/lockouts`: IPs with failures or an active lockout:
-  `{"lockouts":[{"ip":"127.0.0.1","failures":2,"failures_allowed":3,"locked_until":"2026-10-26T19:30:00Z","lockouts":1}]}`.
-  `failures_allowed` is the total that earns the next lockout; `locked_until`
-  is `null` when not locked out.
-- `DELETE /v8/management/server/lockouts`: lifts every lockout and forgets all
-  failures. A locked-out IP can't call it; the supervisor password can.
-
-Alternatively, set a key in `config.yaml` (v8 layout):
+- `MANAGEMENT_SUPERVISOR_PASSWORD` (recommended; random, ≥ 32 characters): read
+  once at startup, then cleared from the proxy's environment, so plugins and
+  child processes never see it. Accepted from loopback only. Exempt from the
+  failed-key IP ban; other wrong keys are still counted and banned. Nothing is
+  written to `config.yaml`.
+- `MANAGEMENT_PASSWORD`: enables the routes without writing a key to disk.
+- `config.yaml` (v8 layout; the legacy `remote-management:` block is still accepted):
 
 ```yaml
 management:
@@ -40,42 +20,49 @@ management:
   secret-key: "<choose a key>"   # plaintext is hashed in memory at load
 ```
 
-or start the proxy with the `MANAGEMENT_PASSWORD` environment variable set,
-which enables the routes without writing a key to disk. The legacy
-`remote-management:` block is still accepted.
+## Failed management keys
+
+Counted per client IP. 5 failures lock the IP out of management for 5 minutes
+(`403`). After a lockout, 3 more failures lock it out for 30 minutes, as does
+every later lockout. A correct key, or 2 hours without a request, resets the IP
+to the first step.
+
+A client key (`access.api-keys`) sent as the management key gets `401` (`this
+is a client API key; management calls need the management key`) and is not
+counted.
+
+- `GET /server/lockouts`: IPs with failures or an active lockout:
+  `{"lockouts":[{"ip":"127.0.0.1","failures":2,"failures_allowed":3,"locked_until":"2026-10-26T19:30:00Z","lockouts":1}]}`.
+  `failures_allowed` is the count that triggers the next lockout; `locked_until`
+  is `null` when not locked out.
+- `DELETE /server/lockouts`: lifts every lockout and clears all failures. A
+  locked-out IP can't call it; the supervisor password can.
 
 ## Process lifecycle
 
 - `-parent-pid <pid>`: the proxy shuts down gracefully when that process exits.
-  On Windows it waits on the process handle; elsewhere it polls every
+  Windows waits on the process handle; other platforms poll every
   `ParentPollInterval` (2s).
-- `POST /v8/management/server/shutdown`: replies `202 {"status":"shutting down"}`
-  and then stops the proxy the same way SIGINT does. Requests whose TCP peer or
-  resolved client IP is not loopback get `403`, even with `allow-remote: true`.
+- `POST /server/shutdown`: replies `202 {"status":"shutting down"}`, then stops
+  the proxy as SIGINT does. `403` when the TCP peer or resolved client IP is not
+  loopback, even with `allow-remote: true`.
 
-## Routing strategy
+## Routing
 
-`routing.strategy: soonest-reset` (aliases `soonestreset`, `sr`) sends each new
-conversation to the available account whose weekly window resets first, then
-the 5-hour window, then credential ID. Accounts with unknown or past resets
-rank last. Cooldowns (for example a hit 5-hour limit) take the account out
-until it recovers, after which it ranks again. Pair it with
-`routing.session-affinity: true` so a conversation stays on its account and
-only new conversations move to the soonest-resetting one.
+- `routing.strategy: soonest-reset` (aliases `soonestreset`, `sr`): each new
+  conversation goes to the available account whose weekly window resets first,
+  then the 5-hour window, then credential ID. Unknown or past resets rank last.
+  A cooling-down account is skipped until it recovers. With
+  `routing.session-affinity: true`, a conversation stays on its account.
+- `routing.prefer-auth-kind`: `oauth` uses subscriptions before API keys,
+  `api-key` the reverse; unset mixes both. With none of the preferred kind
+  available, requests use the other kind. A recovered preferred credential takes
+  the next request, even in a conversation bound to a fallback. Explicit
+  credential pins take precedence.
+- `disabled: true` on an entry under `api-keys.<family>[].keys` stops routing to
+  that key without deleting it. The key keeps its credential identity.
 
-`routing.prefer-auth-kind: oauth` uses available subscription credentials
-before API keys; `api-key` uses API keys first. When no credential of the
-preferred kind is available, requests fall back to the other kind. A recovered
-preferred credential takes the next request even in a conversation bound to a
-fallback. Explicit credential pins still take precedence. Unset mixes both
-kinds; Spillway sets it from its "API keys" routing setting.
-
-Set `disabled: true` on an individual entry under `api-keys.<family>[].keys`
-to stop routing to that key without deleting it. Remove the flag or set it to
-false to re-enable it. The key retains its credential identity across changes.
-
-Read and write through the v8 config API (writes accept an optional
-`If-Match: <ETag from the GET>`):
+Read and write through the v8 config API (writes accept `If-Match: <ETag from the GET>`):
 
 ```http
 GET /v8/management/config/routing/strategy          -> "soonest-reset"
@@ -86,26 +73,19 @@ PUT /v8/management/config/routing/session-affinity  body: true
 
 ## Claude usage lookups
 
-Response headers during traffic carry only the 5-hour, weekly and weekly Fable
-windows, and nothing is persisted, so the proxy looks up each enabled
-Claude OAuth credential's usage (`GET https://api.anthropic.com/api/oauth/usage`)
-at startup and keeps it fresh. The lookup also reports per-model and spend
-windows. It is stored apart from the header snapshot: traffic updates the
-windows its headers carry and never removes lookup-only windows.
+Traffic headers carry only the 5-hour, weekly and weekly Fable windows, and are
+not persisted. The proxy therefore looks up each enabled Claude OAuth
+credential's usage (`GET https://api.anthropic.com/api/oauth/usage`), which also
+reports per-model and spend windows. Lookups are stored apart from header
+readings: traffic updates the windows its headers carry and never removes
+lookup-only windows.
 
-The proxy checks every minute and looks up credentials with no lookup, a lookup
-older than 15 minutes, or a window that reset since the last lookup. Lookups run
-one at a time, 2s apart; a failing credential is retried after 15 minutes. An
-expired access token is not a failure: the lookup is retried 10s later, after
-the proxy renews the token.
+Every minute the proxy looks up credentials with no lookup, one older than 15
+minutes, or a window that reset since the last lookup. Lookups run one at a
+time, 2s apart. A failed credential is retried after 15 minutes. An expired
+access token is not a failure: the lookup retries 10s later, after renewal.
 
-## GET /v8/management/usage/windows
-
-Includes config-backed API keys, including disabled keys. Their `api_key`
-field contains `{ "masked": "sk-a…1234", "success": 7, "failed": 2 }`;
-counts are since the proxy started. Raw keys are never returned by this route.
-Keys without observed quota have an empty `windows` array. Subscription-only
-usage lookup and login renewal do not apply to API keys.
+## GET /usage/windows
 
 ```json
 {
@@ -140,93 +120,97 @@ usage lookup and login renewal do not apply to API keys.
 }
 ```
 
-- `name` is the value used by `DELETE /v8/management/credentials?name=<name>`
-  and by the `name` field of `PATCH /credentials/status` and `/credentials/fields`.
-- `label` is the derived account label; `note` is the user-set note. `email`,
-  `note` and `priority` are omitted when unset.
-- `cooldown_until` is when a benched credential becomes eligible again, else `null`.
-- `weight` is the credential's `weighted-round-robin` weight (default 1; 0 excludes it).
-- `plan` is the subscription. Claude's comes from the account's OAuth profile,
-  looked up every 6 hours and stored on the credential; Codex's is the login
-  token's `plan_type` (`{"tier": "plus", "type": "plus", "label": "Plus"}`).
-  `null` before the first lookup and for other providers. `multiplier` is 5-hour
-  session usage relative to Claude Pro, read from the tier (`..._5x` = 5) or 1 for
-  Pro; `null` when unpublished (Team, Enterprise, every Codex plan).
-- `reset_credits` are a Codex account's rate-limit reset credits from ChatGPT's
-  usage document, looked up every 15 minutes (the same lookup records its windows):
+- `name`: the value for `DELETE /credentials?name=<name>` and the `name` field
+  of `PATCH /credentials/status` and `/credentials/fields`.
+- `label`: derived account label. `note`: user-set note. `email`, `note` and
+  `priority` are omitted when unset.
+- `status_message`: `""`, a proxy reason (e.g. `disabled via management API`), or
+  the provider's last error response body verbatim, often JSON such as
+  `{"type":"error","error":{"type":"rate_limit_error","message":"…"}}`. Raw API
+  keys in it are masked.
+- `cooldown_until`: when a benched credential becomes eligible again, else `null`.
+- `weight`: the `weighted-round-robin` weight (default 1; 0 excludes the credential).
+- `plan`: the subscription. Claude: from the OAuth profile, looked up every 6
+  hours. Codex: the login token's `plan_type` (`{"tier": "plus", "type": "plus", "label": "Plus"}`).
+  `null` before the first lookup and for other providers. `multiplier`: 5-hour
+  usage relative to Claude Pro, from the tier (`..._5x` = 5; Pro = 1); `null`
+  when unpublished (Team, Enterprise, every Codex plan).
+- `reset_credits`: a Codex account's rate-limit reset credits from ChatGPT's
+  usage document, looked up every 15 minutes (the lookup also records windows):
   `{"available": 1, "applicable": 0, "checked_at": "2026-10-26T12:00:00Z"}`.
-  `available` is how many the account holds; `applicable` is how many can be
-  used now, against a limit it has reached. `null` before the first lookup, when
-  the account reports none, and for other providers (Claude reports no such credit).
-- `observed_at` is the time of the latest usage snapshot, else `null`.
-- `next_pick` marks the credential the strategy would choose for a new
-  conversation within its provider. Rotating strategies (`round-robin`) mark none.
-  Credentials defined in the config file are ranked but not listed, so a provider
-  may have no listed `next_pick`.
-- `account_view` marks the Codex credential that Codex's ChatGPT account calls
-  (`/backend-api/`: usage, plan) reach, even under rotating strategies and when
+  `available`: credits held. `applicable`: credits usable now, against a reached
+  limit. `null` before the first lookup, when the account reports none, and for
+  other providers.
+- `observed_at`: time of the latest usage snapshot, else `null`.
+- `next_pick`: the credential the strategy would choose for a new conversation
+  within its provider. Rotating strategies (`round-robin`) mark none.
+  Config-file credentials are ranked but not listed, so a provider may have no
+  listed `next_pick`.
+- `account_view`: the Codex credential that Codex's ChatGPT account calls
+  (`/backend-api/`: usage, plan) reach, also under rotating strategies and when
   every account is cooling down (then the one that recovers first). `false` for
-  every other credential. Clients name their pool login after it, so usage views
-  can match the reading to the account.
-- `windows` are sorted account-wide first, shorter before longer. `used_percent`,
-  `resets_at`, `status` and `duration_seconds` are `null` when unknown.
-  `duration_seconds` is the window length. `scoped` is `true` for model-, feature-
-  or spend-specific windows; only unscoped windows describe the whole account and
-  drive `soonest-reset` routing. `reset_cadence` is `"fixed"` when the next period
-  starts at the reset (resets every `duration_seconds`), `"on_use"` when it starts
-  with the first request after the reset, and `null` when unknown (Codex, Devin).
-  Claude credentials report `on_use` for the 5-hour window and `fixed` for weekly ones. Claude, Codex and Devin
-  credentials report windows; other providers return `[]`.
+  every other credential.
+- `windows`: account-wide first, shorter before longer. `used_percent`,
+  `resets_at`, `status` and `duration_seconds` (window length) are `null` when
+  unknown. `scoped: true` marks model-, feature- or spend-specific windows; only
+  unscoped windows describe the account and drive `soonest-reset`.
+  `reset_cadence`: `"fixed"` (next period starts at the reset), `"on_use"` (starts
+  with the first request after the reset) or `null` (unknown: Codex, Devin).
+  Claude reports `on_use` for 5-hour and `fixed` for weekly windows. Only Claude,
+  Codex and Devin report windows; other providers return `[]`.
 
-## POST /v8/management/usage/refresh
+Config-backed API keys are listed, disabled ones included, with
+`"api_key": {"masked": "sk-a…1234", "success": 7, "failed": 2}` (counts since
+the proxy started). Raw keys are never returned. Keys without observed quota
+have `"windows": []`. Usage lookups and login renewal don't apply to API keys.
 
-Body `{"auth_index": "3f2a9c"}` refreshes one Claude or Codex credential; an empty
-body refreshes every enabled Claude and Codex OAuth credential (2s apart, so this
-can take a while with many accounts). A Codex lookup reads ChatGPT's usage
-document, so its windows and reset credits show without any Codex traffic.
-Returns the same shape as `GET /usage/windows`, plus
-`"errors": {"<id>": "<message>"}` when a lookup failed.
+## POST /usage/refresh
 
-- `404` unknown `auth_index`.
-- `400` the credential is not an enabled Claude or Codex OAuth credential, or the body is invalid.
+Body `{"auth_index": "3f2a9c"}` refreshes one Claude or Codex credential; an
+empty body refreshes every enabled Claude and Codex OAuth credential, 2s apart.
+A Codex lookup reads ChatGPT's usage document, so its windows and reset credits
+appear without Codex traffic. Returns the `GET /usage/windows` shape, plus
+`"errors": {"<id>": "<message>"}` for failed lookups.
 
-## POST /v8/management/usage/reset-credit
+- `404`: unknown `auth_index`.
+- `400`: not an enabled Claude or Codex OAuth credential, or invalid body.
+
+## POST /usage/reset-credit
 
 Spends one of a Codex account's rate-limit reset credits (ChatGPT's
-`POST /backend-api/wham/rate-limit-reset-credits/consume`, the call Codex's
-`/usage` panel makes). Body: `{"auth_index": "<auth_index>"}`; enabled Codex
-logins only (400 otherwise, 404 for an unknown index, 502 when ChatGPT fails).
+`POST /backend-api/wham/rate-limit-reset-credits/consume`, as Codex's `/usage`
+panel does). Body `{"auth_index": "<auth_index>"}`; enabled Codex logins only.
 Each call sends a fresh `redeem_request_id`, so it spends at most one credit.
 
 ```json
 {"code": "reset", "windows_reset": 2, "usage": { "...": "GET /usage/windows payload" }}
 ```
 
-`code` is ChatGPT's outcome: `reset` (spent; the reached limits are cleared),
-`nothing_to_reset` (no limit reached, nothing spent), `no_credit`, or
-`already_redeemed`. On `reset` the credential's cooldown is lifted so routing
-picks it again. The credit count is looked up again; a failed lookup adds
-`refresh_error`.
+`code`: `reset` (spent; reached limits cleared, cooldown lifted),
+`nothing_to_reset` (no limit reached, nothing spent), `no_credit` or
+`already_redeemed`. The credit count is then looked up again; a failed lookup
+adds `refresh_error`.
 
-## GET / PUT /v8/management/routing/preferred-auth
+- `400`: not an enabled Codex login. `404`: unknown index. `502`: ChatGPT failed.
 
-The "use this account" override. `PUT {"provider":"claude","auth_index":"3f2a9c"}`
-makes new requests for that provider use the credential while it is available,
-ahead of the routing strategy and session affinity. When it is cooling down,
-disabled or already tried in the request, routing falls back to automatic.
-`auth_index: ""` clears it. Both methods return `{"preferred":{"claude":"3f2a9c"}}`.
-The preference lives in memory only; a supervisor re-applies it after a restart.
-`GET /usage/windows` marks it with `"preferred": true` and moves `next_pick` to
-it while it is usable. Sessions bound during the override keep their binding
-until session affinity expires.
+## GET / PUT /routing/preferred-auth
 
-- `400` missing provider, or the credential belongs to another provider.
-- `404` unknown `auth_index`.
+`PUT {"provider":"claude","auth_index":"3f2a9c"}` sends that provider's new
+requests to the credential while it is available, ahead of the strategy and
+session affinity. When it is cooling down, disabled or already tried in the
+request, routing is automatic. `auth_index: ""` clears it. Both methods return
+`{"preferred":{"claude":"3f2a9c"}}`. Held in memory only; re-apply after a
+restart. `GET /usage/windows` marks it `"preferred": true` and moves
+`next_pick` to it while usable. Sessions bound during the override keep their
+binding until session affinity expires.
 
-## GET /v8/management/usage/events
+- `400`: missing provider, or the credential belongs to another provider.
+- `404`: unknown `auth_index`.
 
-Server-sent events. `event: ready` on connect, then one `event: request` per
-upstream attempt (successful or failed):
+## GET /usage/events
+
+Server-sent events: `event: ready` on connect, then one `event: request` per
+upstream attempt, successful or failed:
 
 ```json
 {"at":"…","request_id":"…","selection_id":"…","provider":"claude","model":"…",
@@ -235,59 +219,53 @@ upstream attempt (successful or failed):
  "cache_creation_tokens":0}
 ```
 
-`cached_tokens` counts cache reads; `cache_creation_tokens` counts cache writes.
-For Claude both are separate from `input_tokens`; for OpenAI, `input_tokens`
-includes `cached_tokens` and cache writes are not reported.
-
-Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
-one credential selection share `selection_id`. A reader too slow for a burst
-gets `event: resync` and should reload `GET /usage/windows`. `event: usage`
-(data `{}`) means a usage lookup recorded new windows; reload `GET /usage/windows`.
-Lookups that land before the reader catches up share one event. Comment lines
-(`: keep-alive`) arrive every 15s.
+- `cached_tokens`: cache reads. `cache_creation_tokens`: cache writes. Claude
+  counts both apart from `input_tokens`; OpenAI includes `cached_tokens` in
+  `input_tokens` and reports no cache writes.
+- Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
+  one credential selection share `selection_id`.
+- `event: resync`: the reader fell behind; reload `GET /usage/windows`.
+- `event: usage` (data `{}`): a usage lookup recorded new windows; reload
+  `GET /usage/windows`. Lookups before the reader catches up share one event.
+- `: keep-alive` comment lines every 15s.
 
 ## Adding a Claude account (OAuth)
 
-1. `GET /v8/management/oauth/auth-url?provider=claude&is_webui=true` returns
-   `{"status":"ok","url":"<authorize URL>","state":"<state>"}`.
-   With `is_webui=true` the proxy listens on `localhost:54545` for the browser
-   redirect. Open `url` in the browser.
-2. Without `is_webui`, post the final redirect URL instead:
-   `POST /v8/management/oauth/callback` `{"provider":"claude","redirect_url":"<url>"}`.
-3. Poll `GET /v8/management/oauth/status?state=<state>`:
-   `{"status":"wait"}` while pending, `{"status":"ok"}` when saved,
-   `{"status":"error","error":"<message>"}` on failure. The session times out
-   after 5 minutes. `DELETE /v8/management/oauth/session?state=<state>` cancels it.
+1. `GET /oauth/auth-url?provider=claude&is_webui=true` returns
+   `{"status":"ok","url":"<authorize URL>","state":"<state>"}`. Open `url` in a
+   browser. With `is_webui=true` the proxy takes the redirect on `localhost:54545`.
+2. Without `is_webui`, post the final redirect URL:
+   `POST /oauth/callback` `{"provider":"claude","redirect_url":"<url>"}`.
+3. Poll `GET /oauth/status?state=<state>`: `{"status":"wait"}` while pending,
+   `{"status":"ok"}` when saved, `{"status":"error","error":"<message>"}` on
+   failure. Sessions time out after 5 minutes;
+   `DELETE /oauth/session?state=<state>` cancels one.
 
 ## Pool usage limit (429)
 
-When every credential that serves a model is spent, the request fails with
-`429` and error type `usage_limit_reached`, including the request that spends
-the last credential. `X-Should-Retry: false` stops client retries. Clients read
-limits from headers, never the body, so the response repeats the soonest reset
-in each client's own header family:
+When every credential serving a model is spent, the request fails with `429`
+and error type `usage_limit_reached`, including the request that spends the
+last credential. `X-Should-Retry: false` stops client retries. The soonest reset
+is repeated in each client's limit headers:
 
 - Claude Code: `Anthropic-Ratelimit-Unified-Status: rejected`, `-Reset`,
   `-Representative-Claim` (`five_hour` or `seven_day`), and that window's
-  `-5h-`/`-7d-` `Status`, `Reset` and `Utilization: 1`. Claude Code reads them
-  only when signed in to a subscription, not with `ANTHROPIC_AUTH_TOKEN`.
+  `-5h-`/`-7d-` `Status`, `Reset` and `Utilization: 1`. Read only when Claude
+  Code is signed in to a subscription, not with `ANTHROPIC_AUTH_TOKEN`.
 - Codex: `X-Codex-Primary-Used-Percent: 100`, `X-Codex-Primary-Reset-At`, and
   `X-Codex-Primary-Window-Minutes` when the window is known.
 
-Hosts such as T3 Code schedule a resume from these.
-
 ## Codex account calls (`/backend-api/*`)
 
-With `chatgpt_base_url = "http://<proxy>/backend-api/"`, Codex sends its
-ChatGPT account calls (`/wham/usage`, rate-limit reset credits, plugins, tasks)
-here. Those calls are forwarded to `https://chatgpt.com` as one pooled Codex
-account: the one new requests route to (preferred credential, then the routing
-strategy), or the one that recovers first when all are spent. The proxy
-replaces `Authorization` and `Chatgpt-Account-Id` with that account's, strips
-the client key, and drops cookies both ways.
+With `chatgpt_base_url = "http://<proxy>/backend-api/"`, Codex's ChatGPT
+account calls (`/wham/usage`, reset credits, plugins, tasks) are forwarded to
+`https://chatgpt.com` as one pooled Codex account: the one new requests route
+to (preferred credential, then the strategy), or the one that recovers first
+when all are spent. The proxy replaces `Authorization` and `Chatgpt-Account-Id`
+with that account's, strips the client key, and drops cookies both ways.
 
-Only the paths Codex calls are forwarded (`codexAccountRoutes` in
-`codex_backend_paths.go`, taken from codex-rs `rust-v0.164.0`):
+Forwarded paths (`codexAccountRoutes` in `codex_backend_paths.go`, from codex-rs
+`rust-v0.164.0`):
 
 | Path under `/backend-api/` | Methods |
 |---|---|
@@ -298,24 +276,22 @@ Only the paths Codex calls are forwarded (`codexAccountRoutes` in
 | `accounts/verified_access` | `GET` |
 | `files`, `files/…` (upload only) | `POST` |
 
-Anything else (conversations, memories, account admin, file downloads, the
-apps MCP) answers `404` without reaching chatgpt.com and logs a warning naming
-the path. Paths with dot segments, doubled slashes, percent-escapes or
-backslashes are refused too. A new Codex release that adds an account call
-shows up as that warning; add its path to the list.
+Other paths (conversations, memories, account admin, file downloads, the apps
+MCP) answer `404` without reaching chatgpt.com and log a warning naming the
+path; a new Codex account call shows up there. Paths with dot segments, doubled
+slashes, percent-escapes or backslashes are refused.
 
 The caller authenticates with a client key (`access.api-keys`). Codex sends its
-`auth.json` access token, so that token must be a client key; Codex then needs
-no ChatGPT login of its own. A `401` from chatgpt.com is returned as `502`: it
-means the pooled credential failed, and Codex would otherwise try to refresh
-its own login.
+`auth.json` access token, so that token must be a client key; Codex needs no
+ChatGPT login of its own. A `401` from chatgpt.com is returned as `502`, so
+Codex doesn't try to refresh its own login.
 
 ### Codex model, image and search calls (`/backend-api/codex/*`)
 
 With `openai_base_url = "http://<proxy>/backend-api/codex"`, Codex keeps its
-built-in OpenAI provider and sends its model calls here, authenticated with the
-same `auth.json` token. A custom `model_provider` would turn off the tools Codex
-offers only on that provider, such as image generation.
+built-in OpenAI provider and sends model calls here with the same `auth.json`
+token. A custom `model_provider` turns off tools Codex offers only on that
+provider, such as image generation.
 
 | Route | Served by |
 |---|---|
@@ -323,15 +299,14 @@ offers only on that provider, such as image generation.
 | `POST /alpha/search` | standalone web search |
 | `POST /images/generations`, `POST /images/edits` | the Images API, as `/v1/images/*` (`gpt-image-2` routes to Codex accounts) |
 
-Other `/backend-api/codex/*` paths (model list, analytics) fall through to the
-account forwarder above.
+Other `/backend-api/codex/*` paths (model list, analytics) go to the account
+forwarder above. A client that disconnects before chatgpt.com answers gets
+`499`, not `502`.
 
-A client that disconnects before chatgpt.com answers gets `499`, not `502`.
-
-Codex's apps MCP (`/backend-api/ps/mcp`) receives no credential: Codex sends its
-ChatGPT token to an apps MCP server only on chatgpt.com, so through the proxy
-those calls answer `401` (`404` with a client key: the proxy never hands the
-pool token to connected apps). Codex's other features are unaffected.
+Codex's apps MCP (`/backend-api/ps/mcp`) gets no credential, since Codex sends
+its ChatGPT token to an apps MCP server only on chatgpt.com. Through the proxy
+those calls answer `401` (`404` with a client key; the pool token never reaches
+connected apps).
 
 ## Claude Code connectivity check
 
