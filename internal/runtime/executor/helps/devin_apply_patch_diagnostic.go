@@ -225,16 +225,6 @@ func devinPatchReasonCode(reason string) string {
 		"apply_patch snapshot conflicts with completed input":
 		return reason
 	}
-	if strings.HasPrefix(reason, "decode apply_patch input value: ") {
-		switch {
-		case strings.HasSuffix(reason, "in string literal"):
-			return "invalid control character in apply_patch input"
-		case strings.Contains(reason, "in \\u hexadecimal character escape"):
-			return "invalid Unicode escape in apply_patch input"
-		case strings.Contains(reason, "in string escape code"):
-			return "invalid escape in apply_patch input"
-		}
-	}
 	return "other"
 }
 
