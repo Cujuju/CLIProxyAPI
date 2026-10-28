@@ -479,6 +479,12 @@ type RoutingConfig struct {
 	// Ignored when SessionAffinity is false.
 	SessionAffinityPersist bool `yaml:"session-affinity-persist,omitempty" json:"session-affinity-persist,omitempty"`
 
+	// ServerErrors decides what a provider server failure (408, 5xx, empty stream, transport
+	// error) does: "failover" (default) tries the next credential; "return" sends it to the
+	// client on the same credential without cooldown or rebinding. Configured
+	// request-scoped-errors rules take precedence.
+	ServerErrors string `yaml:"server-errors,omitempty" json:"server-errors,omitempty"`
+
 	// SessionAffinitySubagents controls whether subagents (child sessions with parent references)
 	// inherit and bind to the parent's upstream credential across all providers (Claude, Codex,
 	// Antigravity, Gemini), maximizing prompt and KV cache reuse.

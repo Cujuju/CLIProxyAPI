@@ -197,6 +197,13 @@ routing:
   #     errors (429, 401/402/403, 404/model support, invalid_grant) rebind as normal.
   # Ignored when routing.session-affinity is false.
   session-affinity-rebind-on: "any"
+  # What a provider server failure does: 408, any 5xx (including Anthropic's 529 overload and the
+  # first-byte timeout), an empty stream, or a dropped connection.
+  #   - "failover" (default): try the next credential; the failed one cools down.
+  #   - "return": send the error to the client on the same credential, with no cooldown or rebinding.
+  #     Every credential of a provider reaches the same servers; clients retry these errors themselves.
+  # Matching request-scoped-errors rules take precedence.
+  server-errors: "failover"
 
   # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
   force-model-prefix: false

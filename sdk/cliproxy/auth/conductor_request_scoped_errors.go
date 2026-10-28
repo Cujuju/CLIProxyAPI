@@ -188,6 +188,17 @@ func matchRequestScopedErrorAction(auth *Auth, err error, cfg *internalconfig.Co
 	if err == nil || cliproxyexecutor.IsUpstreamWebsocketTurnError(err) {
 		return "", false
 	}
+	if action, ok := matchConfiguredRequestScopedErrorRule(auth, err, cfg); ok {
+		return action, true
+	}
+	// routing.server-errors: return stops server failures like a "stop" rule: no failover, cooldown or rebinding.
+	if returnsServerErrors(cfg) && isUpstreamServerFailure(err) {
+		return RequestScopedActionStop, true
+	}
+	return "", false
+}
+
+func matchConfiguredRequestScopedErrorRule(auth *Auth, err error, cfg *internalconfig.Config) (string, bool) {
 	rules := extractRequestScopedErrorRules(auth, cfg)
 	if len(rules) == 0 {
 		return "", false
