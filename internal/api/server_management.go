@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	managementHandlers "github.com/router-for-me/CLIProxyAPI/v8/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/managementasset"
 	log "github.com/sirupsen/logrus"
 )
@@ -261,10 +260,6 @@ func (s *Server) pluginManagementNoRoute(c *gin.Context) {
 		return
 	}
 	path := c.Request.URL.Path
-	if strings.HasPrefix(path, managementHandlers.CodexBackendPathPrefix) {
-		s.codexBackendNoRoute(c)
-		return
-	}
 	if strings.HasPrefix(path, "/v0/resource/plugins/") {
 		s.pluginResourceNoRoute(c)
 		return
@@ -295,18 +290,13 @@ func (s *Server) pluginManagementNoRoute(c *gin.Context) {
 	c.AbortWithStatus(http.StatusNotFound)
 }
 
-// codexBackendNoRoute serves Codex account calls under /backend-api/ that no explicit route
-// claims. A catch-all route would collide with the /backend-api/codex group.
-func (s *Server) codexBackendNoRoute(c *gin.Context) {
+// codexModels serves Codex's model list, fetched from chatgpt.com as a pooled Codex account.
+func (s *Server) codexModels(c *gin.Context) {
 	if s.mgmt == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	AuthMiddleware(s.accessManager)(c)
-	if c.IsAborted() {
-		return
-	}
-	s.mgmt.CodexBackend(c)
+	s.mgmt.CodexModels(c)
 }
 
 func (s *Server) pluginResourceNoRoute(c *gin.Context) {

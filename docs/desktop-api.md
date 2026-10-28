@@ -109,7 +109,6 @@ access token is not a failure: the lookup retries 10s later, after renewal.
       "reset_credits": null,
       "observed_at": "2026-10-25T12:00:00Z",
       "next_pick": true,
-      "account_view": false,
       "windows": [
         {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "duration_seconds": 18000, "scoped": false, "reset_cadence": "on_use"},
         {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "duration_seconds": 604800, "scoped": false, "reset_cadence": "fixed"},
@@ -146,10 +145,6 @@ access token is not a failure: the lookup retries 10s later, after renewal.
   within its provider. Rotating strategies (`round-robin`) mark none.
   Config-file credentials are ranked but not listed, so a provider may have no
   listed `next_pick`.
-- `account_view`: the Codex credential that Codex's ChatGPT account calls
-  (`/backend-api/`: usage, plan) reach, also under rotating strategies and when
-  every account is cooling down (then the one that recovers first). `false` for
-  every other credential.
 - `windows`: account-wide first, shorter before longer. `used_percent`,
   `resets_at`, `status` and `duration_seconds` (window length) are `null` when
   unknown. `scoped: true` marks model-, feature- or spend-specific windows; only
@@ -255,41 +250,20 @@ is repeated in each client's limit headers:
 - Codex: `X-Codex-Primary-Used-Percent: 100`, `X-Codex-Primary-Reset-At`, and
   `X-Codex-Primary-Window-Minutes` when the window is known.
 
-## Codex account calls (`/backend-api/*`)
+## Codex login
 
-With `chatgpt_base_url = "http://<proxy>/backend-api/"`, Codex's ChatGPT
-account calls (`/wham/usage`, reset credits, plugins, tasks) are forwarded to
-`https://chatgpt.com` as one pooled Codex account: the one new requests route
-to (preferred credential, then the strategy), or the one that recovers first
-when all are spent. The proxy replaces `Authorization` and `Chatgpt-Account-Id`
-with that account's, strips the client key, and drops cookies both ways.
-
-Forwarded paths (`codexAccountRoutes` in `codex_backend_paths.go`, from codex-rs
-`rust-v0.164.0`):
-
-| Path under `/backend-api/` | Methods |
-|---|---|
-| `wham/…` (usage, plan, reset credits, cloud tasks, environments, settings) | any |
-| `codex/…` not claimed by a model route (model list, analytics) | any |
-| `ps/plugins/…`, `ps/apps/batch`, `plugins/featured`, `public/plugins/workspace/…` | any |
-| `connectors/directory/list`, `connectors/directory/list_workspace` | any |
-| `accounts/verified_access` | `GET` |
-| `files`, `files/…` (upload only) | `POST` |
-
-Other paths (conversations, memories, account admin, file downloads, the apps
-MCP) answer `404` without reaching chatgpt.com and log a warning naming the
-path; a new Codex account call shows up there. Paths with dot segments, doubled
-slashes, percent-escapes or backslashes are refused.
-
-The caller authenticates with a client key (`access.api-keys`). Codex sends its
-`auth.json` access token, so that token must be a client key; Codex needs no
-ChatGPT login of its own. A `401` from chatgpt.com is returned as `502`, so
-Codex doesn't try to refresh its own login.
+Codex keeps its own ChatGPT login and sends its account calls (`/wham/usage`,
+plan, plugins) to chatgpt.com itself; the proxy doesn't forward them. While
+`access.api-keys` is set, the proxy also accepts Codex's access token as a
+client credential (`codex-login` provider): an RS256 token from
+`https://auth.openai.com`, checked against that issuer's JWKS, unexpired, for
+the API audience, whose ChatGPT account and user match a Codex credential the
+proxy holds. Usage records name it `codex-login:<auth id>`.
 
 ### Codex model, image and search calls (`/backend-api/codex/*`)
 
 With `openai_base_url = "http://<proxy>/backend-api/codex"`, Codex keeps its
-built-in OpenAI provider and sends model calls here with the same `auth.json`
+built-in OpenAI provider and sends model calls here with its `auth.json`
 token. A custom `model_provider` turns off tools Codex offers only on that
 provider, such as image generation.
 
@@ -299,14 +273,11 @@ provider, such as image generation.
 | `POST /alpha/search` | standalone web search |
 | `POST /images/generations`, `POST /images/edits` | the Images API, as `/v1/images/*` (`gpt-image-2` routes to Codex accounts) |
 
-Other `/backend-api/codex/*` paths (model list, analytics) go to the account
-forwarder above. A client that disconnects before chatgpt.com answers gets
-`499`, not `502`.
-
-Codex's apps MCP (`/backend-api/ps/mcp`) gets no credential, since Codex sends
-its ChatGPT token to an apps MCP server only on chatgpt.com. Through the proxy
-those calls answer `401` (`404` with a client key; the pool token never reaches
-connected apps).
+`GET /models` (Codex's model list) is fetched from chatgpt.com as a pooled
+Codex account: the one new requests route to, or the one that recovers first
+when all are spent. The client key and cookies are stripped. A `401` from
+chatgpt.com is returned as `502`, and a client that disconnects first gets
+`499`. Other `/backend-api/*` paths answer `404`.
 
 ## Claude Code connectivity check
 

@@ -124,6 +124,7 @@ func (s *Server) setupRoutes() {
 		codexDirect.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
 		codexDirect.POST("/responses", openaiResponsesHandlers.Responses)
 		codexDirect.POST("/responses/compact", openaiResponsesHandlers.Compact)
+		codexDirect.GET("/models", s.codexModels)
 		codexDirect.POST("/alpha/search", s.codexAlphaSearch)
 		// Codex's image tool posts here when its OpenAI provider points at the proxy.
 		codexDirect.POST("/images/generations", openaiHandlers.ImagesGenerations)

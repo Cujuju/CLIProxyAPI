@@ -167,11 +167,6 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		}
 		nextPick[provider] = coreauth.PreviewNextPick(strategy, group, now)
 	}
-	// Codex's account calls under /backend-api/ reach this credential; clients name their pool login after it.
-	accountView := ""
-	if auth := h.codexAccountAuth(now); auth != nil {
-		accountView = auth.ID
-	}
 	credentials := make([]gin.H, 0, len(auths))
 	for _, auth := range auths {
 		entry := h.desktopCredentialEntry(auth, now)
@@ -197,7 +192,6 @@ func (h *Handler) usageWindowsPayload(now time.Time) gin.H {
 		}
 		pick := nextPick[strings.ToLower(strings.TrimSpace(auth.Provider))]
 		credential["next_pick"] = pick != "" && pick == auth.ID
-		credential["account_view"] = accountView != "" && accountView == auth.ID
 		credential["weight"] = coreauth.CredentialWeight(auth)
 		credential["plan"] = desktopPlan(auth)
 		credential["reset_credits"] = desktopResetCredits(auth)

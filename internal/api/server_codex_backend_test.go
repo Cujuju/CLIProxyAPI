@@ -19,15 +19,24 @@ func serveBackendAPI(s *Server, method, path, key string) *httptest.ResponseReco
 	return rec
 }
 
-func TestCodexBackendRouteNeedsAClientKey(t *testing.T) {
+func TestCodexModelsRouteNeedsAClientKey(t *testing.T) {
 	s := newTestServer(t)
-	if rec := serveBackendAPI(s, http.MethodGet, "/backend-api/wham/usage", ""); rec.Code != http.StatusUnauthorized {
+	if rec := serveBackendAPI(s, http.MethodGet, "/backend-api/codex/models", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("without key: status = %d, want 401", rec.Code)
 	}
-	// With a key the call reaches the account forwarder; this fixture pools no Codex account.
-	rec := serveBackendAPI(s, http.MethodGet, "/backend-api/wham/usage", "test-key")
+	// With a key the call reaches the model-list forwarder; this fixture pools no Codex account.
+	rec := serveBackendAPI(s, http.MethodGet, "/backend-api/codex/models", "test-key")
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), noCodexAccountBody) {
 		t.Fatalf("with key: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCodexAccountCallsAreNotForwarded(t *testing.T) {
+	s := newTestServer(t)
+	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/codex/analytics-events/events"} {
+		if rec := serveBackendAPI(s, http.MethodGet, path, "test-key"); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d, want 404", path, rec.Code)
+		}
 	}
 }
 

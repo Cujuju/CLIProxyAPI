@@ -35,7 +35,7 @@ func (closeNotifyRecorder) CloseNotify() <-chan bool { return make(chan bool) }
 
 func serveCodexBackend(h *Handler, target string, header http.Header) *httptest.ResponseRecorder {
 	engine := gin.New()
-	engine.GET("/backend-api/*path", h.CodexBackend)
+	engine.GET("/backend-api/*path", h.CodexModels)
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	req.Header = header
 	rec := httptest.NewRecorder()
@@ -58,7 +58,7 @@ func TestCodexBackend_SendsTheCallAsThePoolAccount(t *testing.T) {
 	defer upstream.Close()
 	h := newCodexBackendHandler(t, upstream.URL, codexPoolAuth("codex-a", "pool-token", "acct-1"))
 
-	rec := serveCodexBackend(h, "/backend-api/wham/usage?key=client-key&x=1", http.Header{
+	rec := serveCodexBackend(h, "/backend-api/codex/models?key=client-key&x=1", http.Header{
 		"Authorization":      {"Bearer client-key"},
 		"X-Api-Key":          {"client-key"},
 		"Chatgpt-Account-Id": {"client-account"},
@@ -66,7 +66,7 @@ func TestCodexBackend_SendsTheCallAsThePoolAccount(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != `{"plan_type":"plus"}` {
 		t.Fatalf("response = %d %s", rec.Code, rec.Body.String())
 	}
-	if got.URL.Path != "/backend-api/wham/usage" || got.URL.RawQuery != "x=1" {
+	if got.URL.Path != "/backend-api/codex/models" || got.URL.RawQuery != "x=1" {
 		t.Fatalf("upstream URL = %s, want the same path without the client key", got.URL)
 	}
 	if got.Header.Get("Authorization") != "Bearer pool-token" || got.Header.Get("X-Api-Key") != "" {
@@ -84,7 +84,7 @@ func TestCodexBackend_RejectedPoolTokenIsAGatewayError(t *testing.T) {
 	defer upstream.Close()
 	h := newCodexBackendHandler(t, upstream.URL, codexPoolAuth("codex-a", "expired", "acct-1"))
 	// A 401 would make Codex refresh a login that has no real refresh token.
-	if rec := serveCodexBackend(h, "/backend-api/wham/usage", http.Header{}); rec.Code != http.StatusBadGateway {
+	if rec := serveCodexBackend(h, "/backend-api/codex/models", http.Header{}); rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
 	}
 }
@@ -92,17 +92,17 @@ func TestCodexBackend_RejectedPoolTokenIsAGatewayError(t *testing.T) {
 func TestCodexBackend_FailedForwardStatus(t *testing.T) {
 	// Port 1 refuses connections: an upstream failure is a gateway error.
 	h := newCodexBackendHandler(t, "http://127.0.0.1:1", codexPoolAuth("codex-a", "pool-token", "acct-1"))
-	if rec := serveCodexBackend(h, "/backend-api/wham/usage", http.Header{}); rec.Code != http.StatusBadGateway {
+	if rec := serveCodexBackend(h, "/backend-api/codex/models", http.Header{}); rec.Code != http.StatusBadGateway {
 		t.Fatalf("unreachable upstream: status = %d, want 502", rec.Code)
 	}
 
 	// A client that hung up is not a gateway failure (Codex cancels calls as it exits).
 	engine := gin.New()
-	engine.GET("/backend-api/*path", h.CodexBackend)
+	engine.GET("/backend-api/*path", h.CodexModels)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	rec := httptest.NewRecorder()
-	engine.ServeHTTP(closeNotifyRecorder{rec}, httptest.NewRequest(http.MethodGet, "/backend-api/wham/usage", nil).WithContext(ctx))
+	engine.ServeHTTP(closeNotifyRecorder{rec}, httptest.NewRequest(http.MethodGet, "/backend-api/codex/models", nil).WithContext(ctx))
 	if rec.Code != clienterror.StatusClientClosedRequest {
 		t.Fatalf("client gone: status = %d, want %d", rec.Code, clienterror.StatusClientClosedRequest)
 	}
@@ -110,7 +110,7 @@ func TestCodexBackend_FailedForwardStatus(t *testing.T) {
 
 func TestCodexBackend_NoCodexAccount(t *testing.T) {
 	h := newCodexBackendHandler(t, "http://127.0.0.1:1")
-	if rec := serveCodexBackend(h, "/backend-api/wham/usage", http.Header{}); rec.Code != http.StatusServiceUnavailable {
+	if rec := serveCodexBackend(h, "/backend-api/codex/models", http.Header{}); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 }
