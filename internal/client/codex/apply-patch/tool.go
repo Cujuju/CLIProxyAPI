@@ -2,6 +2,7 @@ package applypatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -83,8 +84,12 @@ func UnwrapInput(arguments string) (string, error) {
 		return "", fmt.Errorf("apply_patch arguments must contain the input field")
 	}
 
+	valueOffset := decoder.InputOffset()
 	token, errToken = decoder.Token()
 	if errToken != nil {
+		if errString := inputStringError(arguments[valueOffset:]); errString != nil {
+			return "", errString
+		}
 		return "", fmt.Errorf("decode apply_patch input value: %w", errToken)
 	}
 	input, ok := token.(string)
@@ -114,4 +119,55 @@ func UnwrapInput(arguments string) (string, error) {
 func EscapeInputFragment(fragment string) string {
 	encoded, _ := json.Marshal(fragment)
 	return string(encoded[1 : len(encoded)-1])
+}
+
+// Malformed input strings get the streaming decoder's messages; Go's own JSON error text differs between releases.
+var (
+	errInputControlCharacter = errors.New("invalid control character in apply_patch input")
+	errInputUnicodeEscape    = errors.New("invalid Unicode escape in apply_patch input")
+	errInputEscape           = errors.New("invalid escape in apply_patch input")
+)
+
+// inputStringError names the first malformed character in the string value at the start of rest
+// (after the input key); nil when the value is not a string or the string is well formed.
+func inputStringError(rest string) error {
+	rest = strings.TrimLeft(rest, " \t\n\r:")
+	if !strings.HasPrefix(rest, `"`) {
+		return nil
+	}
+	for i := 1; i < len(rest); i++ {
+		c := rest[i]
+		switch {
+		case c == '"':
+			return nil
+		case c < 0x20:
+			return errInputControlCharacter
+		case c != '\\':
+			continue
+		}
+		i++
+		if i >= len(rest) {
+			return nil
+		}
+		switch rest[i] {
+		case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+		case 'u':
+			if i+4 >= len(rest) || !isHex4(rest[i+1:i+5]) {
+				return errInputUnicodeEscape
+			}
+			i += 4
+		default:
+			return errInputEscape
+		}
+	}
+	return nil
+}
+
+func isHex4(s string) bool {
+	for _, c := range []byte(s) {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }

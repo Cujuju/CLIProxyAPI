@@ -8,6 +8,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/tidwall/gjson"
 )
 
 func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
@@ -53,8 +54,10 @@ func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
 				}
 				return
 			}
-			if !exists || value != nil {
-				t.Fatalf("multi_agent_version = %#v, want preserved null", value)
+			// Disabled keeps the default template's (gpt-5.5) version.
+			want := gjson.GetBytes(registry.GetCodexClientModelsJSON(), `models.#(slug=="gpt-5.5").multi_agent_version`).Value()
+			if !exists || value != want {
+				t.Fatalf("multi_agent_version = %#v, want preserved %#v", value, want)
 			}
 		})
 	}

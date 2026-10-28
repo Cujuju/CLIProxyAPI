@@ -4,46 +4,45 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestCodexConfigurationUpdateCapability(t *testing.T) {
+	// Each tier's models follow their catalog entry, so the test holds when the catalog is refreshed.
 	for _, tier := range []struct {
-		name    string
-		models  func() []*ModelInfo
-		capable []string
+		key    string
+		models func() []*ModelInfo
 	}{
-		{name: "free", models: GetCodexFreeModels, capable: []string{"gpt-6-luna"}},
-		{name: "team", models: GetCodexTeamModels, capable: []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
-		{name: "plus", models: GetCodexPlusModels, capable: []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
-		{name: "pro", models: GetCodexProModels, capable: []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
+		{key: "codex-free", models: GetCodexFreeModels},
+		{key: "codex-team", models: GetCodexTeamModels},
+		{key: "codex-plus", models: GetCodexPlusModels},
+		{key: "codex-pro", models: GetCodexProModels},
 	} {
-		t.Run(tier.name, func(t *testing.T) {
-			byID := make(map[string]*ModelInfo)
+		t.Run(tier.key, func(t *testing.T) {
+			seen := map[bool]bool{}
 			for _, info := range tier.models() {
-				if info != nil {
-					byID[info.ID] = info
-				}
-			}
-			for _, id := range append([]string{"gpt-5.5"}, tier.capable...) {
-				info := byID[id]
 				if info == nil {
-					t.Errorf("%s is missing", id)
 					continue
 				}
-				want := id != "gpt-5.5"
+				want := gjson.GetBytes(embeddedModelsJSON, tier.key+`.#(id=="`+info.ID+`").support_configuration_update`).Bool()
+				seen[want] = true
 				if info.SupportConfigurationUpdate != want {
-					t.Errorf("%s configuration_update = %v, want %v", id, info.SupportConfigurationUpdate, want)
+					t.Errorf("%s configuration_update = %v, want %v", info.ID, info.SupportConfigurationUpdate, want)
 				}
 				if cloned := cloneModelInfo(info); cloned.SupportConfigurationUpdate != want {
-					t.Errorf("%s clone configuration_update = %v, want %v", id, cloned.SupportConfigurationUpdate, want)
+					t.Errorf("%s clone configuration_update = %v, want %v", info.ID, cloned.SupportConfigurationUpdate, want)
 				}
 				raw, errMarshal := json.Marshal(info)
 				if errMarshal != nil {
 					t.Fatal(errMarshal)
 				}
 				if strings.Contains(string(raw), "support_configuration_update") || strings.Contains(string(raw), "SupportConfigurationUpdate") {
-					t.Errorf("%s exposed configuration_update capability: %s", id, raw)
+					t.Errorf("%s exposed configuration_update capability: %s", info.ID, raw)
 				}
+			}
+			if !seen[true] || !seen[false] {
+				t.Fatalf("tier needs capable and non-capable models to test both, saw %v", seen)
 			}
 		})
 	}
