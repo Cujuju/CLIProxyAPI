@@ -211,7 +211,7 @@ upstream attempt, successful or failed:
 {"at":"…","request_id":"…","selection_id":"…","provider":"claude","model":"…",
  "auth_id":"…","auth_index":"3f2a9c","stream":true,"failed":false,"status_code":0,
  "latency_ms":5400,"ttft_ms":900,"input_tokens":1200,"output_tokens":300,"cached_tokens":0,
- "cache_creation_tokens":0}
+ "cache_creation_tokens":0,"session_id":"claude:ac980658-…"}
 ```
 
 - `cached_tokens`: cache reads. `cache_creation_tokens`: cache writes. Claude
@@ -219,6 +219,8 @@ upstream attempt, successful or failed:
   `input_tokens` and reports no cache writes.
 - Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
   one credential selection share `selection_id`.
+- `session_id`: the client conversation, as session affinity keys it (`claude:<session uuid>`,
+  `codex:<thread id>`, with `:agent:<id>` for subagents); omitted when the client sends none.
 - `event: resync`: the reader fell behind; reload `GET /usage/windows`.
 - `event: usage` (data `{}`): a usage lookup recorded new windows; reload
   `GET /usage/windows`. Lookups before the reader catches up share one event.

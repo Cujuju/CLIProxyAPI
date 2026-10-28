@@ -13,3 +13,10 @@ func TestDesktopEventReportsCacheReadsAndWrites(t *testing.T) {
 		t.Fatalf("cached=%d cacheWrite=%d, want 80000 and 1500", event.Cached, event.CacheWrite)
 	}
 }
+
+func TestDesktopEventReportsSessionID(t *testing.T) {
+	event := desktopEventFromRecord(coreusage.Record{SessionID: "claude:ac980658-63bd-4fb3-97ba-8da64cb1e344"})
+	if event.SessionID != "claude:ac980658-63bd-4fb3-97ba-8da64cb1e344" {
+		t.Fatalf("session_id = %q", event.SessionID)
+	}
+}

@@ -47,6 +47,8 @@ type desktopRequestEvent struct {
 	// Cached counts cache reads; CacheWrite counts tokens written to the prompt cache.
 	Cached     int64 `json:"cached_tokens"`
 	CacheWrite int64 `json:"cache_creation_tokens"`
+	// SessionID is the client conversation (e.g. "claude:<session uuid>"); empty when the client sends none.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 type desktopEventSubscriber struct {
@@ -95,7 +97,7 @@ func (hub *desktopEventHub) HandleUsage(_ context.Context, record coreusage.Reco
 
 func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 	event := desktopRequestEvent{
-		At: record.RequestedAt.UTC(), RequestID: record.RequestID, SelectionID: record.SelectionID, TraceID: record.TraceID,
+		At: record.RequestedAt.UTC(), RequestID: record.RequestID, SelectionID: record.SelectionID, TraceID: record.TraceID, SessionID: record.SessionID,
 		Provider: record.Provider, Model: record.Model, Alias: record.Alias, AuthID: record.AuthID, AuthIndex: record.AuthIndex,
 		Stream: record.Stream, Failed: record.Failed, StatusCode: record.Fail.StatusCode,
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),
