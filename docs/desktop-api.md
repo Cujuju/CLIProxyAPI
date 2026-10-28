@@ -222,6 +222,20 @@ binding until session affinity expires.
 - `400`: missing provider, or the credential belongs to another provider.
 - `404`: unknown `auth_index`.
 
+## POST /routing/move-session
+
+`{"session_id":"claude:<session uuid>","auth_index":"3f2a9c"}` moves a
+conversation to another credential of the same provider: its live
+session-affinity bindings (every model, and its subagents) now point at that
+credential, keeping their expiry. `session_id` is a request event's
+`session_id`. The next request uses the new credential while it is available;
+otherwise routing picks one as usual. Returns `{"bound":2}`, the number of
+bindings the conversation has for that provider (including any already there).
+
+- `400`: missing `session_id` or `auth_index`.
+- `404`: unknown `auth_index`, or no live binding for that provider.
+- `409`: session affinity is off.
+
 ## GET /usage/events
 
 Server-sent events: `event: ready` on connect, then one `event: request` per
