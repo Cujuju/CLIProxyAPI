@@ -504,6 +504,10 @@ func TestAdvertiserAndBrowser_Integration(t *testing.T) {
 		}
 	}()
 
+	if runtime.GOOS == "windows" {
+		// Browsing needs per-packet interface and destination metadata, which x/net does not provide for IPv4 on Windows.
+		t.Skip("mDNS browsing is not supported on Windows")
+	}
 	browseCtx, browseCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer browseCancel()
 	browser := NewZeroconfBrowser(ifaces...)
