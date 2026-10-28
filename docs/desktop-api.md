@@ -151,7 +151,10 @@ access token is not a failure: the lookup retries 10s later, after renewal.
   unscoped windows describe the account and drive `soonest-reset`.
   `reset_cadence`: `"fixed"` (next period starts at the reset), `"on_use"` (starts
   with the first request after the reset) or `null` (unknown: Codex, Devin).
-  Claude reports `on_use` for 5-hour and `fixed` for weekly windows. Only Claude,
+  Claude reports `on_use` for 5-hour and `fixed` for weekly windows; Codex
+  reports `on_use` for its account-wide 5-hour window. An `on_use` window that
+  has not started has `resets_at: null` (Codex: unused, with a reset a full
+  window away; one started under a minute ago reads the same). Only Claude,
   Codex and Devin report windows; other providers return `[]`.
 
 Config-backed API keys are listed, disabled ones included, with
@@ -188,6 +191,20 @@ adds `refresh_error`.
 
 - `400`: not an enabled Codex login. `404`: unknown index. `502`: ChatGPT failed.
 
+## POST /usage/start-window
+
+Starts a login's `on_use` windows now by sending one minimal request through
+that credential (Claude: `max_tokens: 1`; Codex: a one-word prompt, since its
+upstream rejects output caps). Body `{"auth_index": "<auth_index>", "model":
+"<model id>"}`; enabled Claude and Codex logins only. The request runs through
+the normal executor, so login renewal and response-header windows apply.
+Returns `{"usage": <GET /usage/windows payload>}`.
+
+- `400`: missing field, or not an enabled Claude or Codex login. `404`: unknown
+  index. `409`: an account-wide `on_use` window is already running.
+- `502`: the request failed; `{"error": "…", "status_code": 429}` carries the
+  upstream status when known.
+
 ## GET / PUT /routing/preferred-auth
 
 `PUT {"provider":"claude","auth_index":"3f2a9c"}` sends that provider's new
@@ -217,6 +234,8 @@ upstream attempt, successful or failed:
 - `cached_tokens`: cache reads. `cache_creation_tokens`: cache writes. Claude
   counts both apart from `input_tokens`; OpenAI includes `cached_tokens` in
   `input_tokens` and reports no cache writes.
+- `purpose: "window-start"` marks requests sent by `POST /usage/start-window`;
+  absent for client traffic.
 - Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
   one credential selection share `selection_id`.
 - `event: resync`: the reader fell behind; reload `GET /usage/windows`.

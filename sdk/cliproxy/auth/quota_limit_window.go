@@ -57,6 +57,9 @@ const (
 	fiveHourWindow        = 5 * time.Hour
 	weeklyWindow          = daysPerWeek * hoursPerDay * time.Hour
 	dailyWindow           = hoursPerDay * time.Hour
+	// codexUnstartedTolerance absorbs whole-second resets and lookup latency. A window started
+	// less than this before an observation also reads as unstarted.
+	codexUnstartedTolerance = time.Minute
 )
 
 var codexWindowSignal = regexp.MustCompile(`^X-Codex-(?:(.+)-)?(Primary|Secondary)-(Used-Percent|Window-Minutes|Reset-At|Reset-After-Seconds)$`)
@@ -256,9 +259,24 @@ func codexQuotaWindows(signals map[string]string, observedAt time.Time) []QuotaW
 			}
 			window.Label = name + " · " + windowLabelForMinutes(window.minutes, "limit")
 		}
+		markCodexSessionWindow(&window.QuotaWindow, observedAt)
 		out = append(out, window.QuotaWindow)
 	}
 	return out
+}
+
+// markCodexSessionWindow marks Codex's account-wide 5-hour window as starting on use. Until a
+// request starts it, Codex reports it unused with a reset a full window after each observation;
+// that moving reset is cleared so an unstarted window reads like Claude's (no reset).
+func markCodexSessionWindow(window *QuotaWindow, observedAt time.Time) {
+	if window.Scoped || window.Duration != fiveHourWindow {
+		return
+	}
+	window.Cadence = ResetCadenceOnUse
+	unused := window.UsedPercent != nil && *window.UsedPercent == 0
+	if unused && !observedAt.IsZero() && !window.ResetsAt.IsZero() && window.ResetsAt.Sub(observedAt) >= window.Duration-codexUnstartedTolerance {
+		window.ResetsAt = time.Time{}
+	}
 }
 
 func windowLabelForMinutes(minutes int, fallback string) string {

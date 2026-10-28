@@ -36,12 +36,16 @@ func TestDesktopRoutesRequireManagementKey(t *testing.T) {
 		{http.MethodGet, "/v8/management/usage/windows"},
 		{http.MethodPost, "/v8/management/usage/refresh"},
 		{http.MethodPost, "/v8/management/usage/reset-credit"},
+		{http.MethodPost, "/v8/management/usage/start-window"},
 		{http.MethodPost, "/v8/management/server/shutdown"},
 		{http.MethodGet, "/v8/management/usage/events"},
 	} {
 		if !routes[route.method+" "+route.path] {
 			t.Fatalf("missing route %s %s", route.method, route.path)
 		}
+		// Five keyless probes lock the address out; clear them so every route answers 401.
+		clearedProbe, _ := gin.CreateTestContext(httptest.NewRecorder())
+		h.DeleteLockouts(clearedProbe)
 		req := httptest.NewRequest(route.method, route.path, nil)
 		req.RemoteAddr = "127.0.0.1:1234"
 		recorder := httptest.NewRecorder()

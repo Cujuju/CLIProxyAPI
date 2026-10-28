@@ -47,6 +47,8 @@ type desktopRequestEvent struct {
 	// Cached counts cache reads; CacheWrite counts tokens written to the prompt cache.
 	Cached     int64 `json:"cached_tokens"`
 	CacheWrite int64 `json:"cache_creation_tokens"`
+	// Purpose is "window-start" for requests that start a usage window; empty for client traffic.
+	Purpose string `json:"purpose,omitempty"`
 }
 
 type desktopEventSubscriber struct {
@@ -101,6 +103,9 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),
 		InputTokens: record.Detail.InputTokens, Output: record.Detail.OutputTokens, Cached: record.Detail.CachedTokens,
 		CacheWrite: record.Detail.CacheCreationTokens,
+	}
+	if record.AccessProvider == WindowStartAccessProvider {
+		event.Purpose = WindowStartAccessProvider
 	}
 	if record.Failed && record.Fail.Body != "" {
 		event.Error = coreauth.ExtractUpstreamErrorSummary(record.Fail.Body)
