@@ -10,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/tidwall/gjson"
 )
 
 func TestModelsMultiAgentClientConfigAndReload(t *testing.T) {
@@ -72,7 +73,8 @@ func TestModelsMultiAgentClientConfigAndReload(t *testing.T) {
 						if entry["slug"] != modelID {
 							continue
 						}
-						var want any
+						// Disabled keeps the default template's (gpt-5.5) version.
+						want := gjson.GetBytes(registry.GetCodexClientModelsJSON(), `models.#(slug=="gpt-5.5").multi_agent_version`).Value()
 						if tc.want {
 							want = "v2"
 						}
