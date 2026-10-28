@@ -1,2 +1,4 @@
 # Shell scripts must keep LF so bash runs them on Windows checkouts too.
 *.sh text eol=lf
+# Test fixtures are compared byte for byte, so they keep LF on Windows checkouts too.
+**/testdata/** text=auto eol=lf
