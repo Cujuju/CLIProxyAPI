@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 )
 
 func TestStreamFromContextDefaultsMissingToFalse(t *testing.T) {
@@ -181,6 +183,25 @@ func TestManagerPublishBackfillsContextAuthFields(t *testing.T) {
 		}
 		if !got.IsNativeKey {
 			t.Fatalf("got.IsNativeKey = false, want true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for usage record")
+	}
+}
+
+func TestManagerPublishBackfillsUserAgent(t *testing.T) {
+	mgr := NewManager(10)
+	t.Cleanup(mgr.Stop)
+	plugin := &captureUsagePlugin{records: make(chan Record, 1)}
+	mgr.Register(plugin)
+
+	ctx := internallogging.WithClientRequestMetadata(context.Background(), internallogging.ClientRequestMetadata{UserAgent: "claude-cli/2.1.0"})
+	mgr.Publish(ctx, Record{Provider: "claude", Model: "claude-opus-5-5"})
+
+	select {
+	case got := <-plugin.records:
+		if got.UserAgent != "claude-cli/2.1.0" {
+			t.Fatalf("got.UserAgent = %q, want claude-cli/2.1.0", got.UserAgent)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for usage record")

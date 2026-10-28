@@ -41,7 +41,9 @@ type Record struct {
 	// IsNativeKey reports whether the client API key was authenticated by CPA's native config provider.
 	IsNativeKey bool
 	// AccessProvider identifies the client request authentication provider (e.g. "config-inline" or plugin ID).
-	AccessProvider  string
+	AccessProvider string
+	// UserAgent is the client request's User-Agent header; it names the calling program.
+	UserAgent       string
 	SessionID       string
 	ParentSessionID string
 	AuthID          string
@@ -717,6 +719,9 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 		if provider := AccessProviderFromContext(ctx); provider != "" {
 			record.AccessProvider = provider
 		}
+	}
+	if strings.TrimSpace(record.UserAgent) == "" {
+		record.UserAgent = internallogging.GetClientRequestMetadata(ctx).UserAgent
 	}
 	if !record.IsNativeKey {
 		if nativeExplicit, ok := IsNativeKeyFromContext(ctx); ok {

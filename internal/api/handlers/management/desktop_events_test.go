@@ -20,3 +20,10 @@ func TestDesktopEventReportsSessionID(t *testing.T) {
 		t.Fatalf("session_id = %q", event.SessionID)
 	}
 }
+
+func TestDesktopEventReportsUserAgent(t *testing.T) {
+	event := desktopEventFromRecord(coreusage.Record{UserAgent: "codex_cli_rs/0.164.0"})
+	if event.UserAgent != "codex_cli_rs/0.164.0" {
+		t.Fatalf("user_agent = %q", event.UserAgent)
+	}
+}

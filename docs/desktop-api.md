@@ -243,6 +243,8 @@ upstream attempt, successful or failed:
   one credential selection share `selection_id`.
 - `session_id`: the client conversation, as session affinity keys it (`claude:<session uuid>`,
   `codex:<thread id>`, with `:agent:<id>` for subagents); omitted when the client sends none.
+- `user_agent`: the client request's User-Agent header, naming the program that sent it
+  (e.g. `claude-cli/…`, `codex_cli_rs/…`); omitted when the client sends none.
 - `event: resync`: the reader fell behind; reload `GET /usage/windows`.
 - `event: usage` (data `{}`): a usage lookup recorded new windows; reload
   `GET /usage/windows`. Lookups before the reader catches up share one event.
