@@ -474,6 +474,11 @@ type RoutingConfig struct {
 	// Default: 1h. Accepts duration strings like "30m", "1h", "2h30m".
 	SessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
 
+	// SessionAffinityPersist saves session bindings in the auth directory and restores them at
+	// startup, so a restart keeps each conversation on its credential and prompt cache.
+	// Ignored when SessionAffinity is false.
+	SessionAffinityPersist bool `yaml:"session-affinity-persist,omitempty" json:"session-affinity-persist,omitempty"`
+
 	// SessionAffinitySubagents controls whether subagents (child sessions with parent references)
 	// inherit and bind to the parent's upstream credential across all providers (Claude, Codex,
 	// Antigravity, Gemini), maximizing prompt and KV cache reuse.

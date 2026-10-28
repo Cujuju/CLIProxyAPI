@@ -94,6 +94,7 @@ func (s *Service) Run(ctx context.Context) error {
 				log.Warnf("failed to restore cooldown state: %v", errRestoreCooldown)
 			}
 		}
+		s.syncSessionAffinity()
 		s.registerAvailableExecutors(ctx, executorRegistrationOptions{
 			includeBaseline: true,
 			auths:           s.coreManager.List(),
@@ -235,6 +236,7 @@ func (s *Service) Run(ctx context.Context) error {
 		go s.runAntigravityModelRefresh(ctx)
 		go s.runClaudeUsagePolling(ctx)
 		go s.runCodexUsagePolling(ctx)
+		go s.runSessionAffinitySaving(ctx)
 	}
 
 	select {
@@ -372,6 +374,9 @@ func (s *Service) Shutdown(ctx context.Context) error {
 				}
 			}
 		}
+
+		// The server has stopped, so no request can change a binding after this save.
+		s.syncSessionAffinity()
 
 		if s.pluginHost != nil {
 			sdktranslator.SetPluginHooks(nil)

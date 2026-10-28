@@ -176,6 +176,9 @@ routing:
   session-affinity: false # default: false
   # How long session-to-auth bindings are retained. Default: 1h
   session-affinity-ttl: "1h"
+  # When true, save session bindings to session-affinity.state in the auth directory and restore
+  # them at startup, so a restart keeps each conversation on its credential. Default: false
+  session-affinity-persist: false
   # When true (default), subagents (child sessions with parent references) inherit and bind
   # to the parent's upstream credential across all providers (Claude, Codex, Antigravity, Gemini),
   # for the same model, maximizing Prompt/KV Cache reuse and minimizing TTFT.
