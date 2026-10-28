@@ -136,9 +136,12 @@ access token is not a failure: the lookup retries 10s later, after renewal.
   when unpublished (Team, Enterprise, every Codex plan).
 - `reset_credits`: a Codex account's rate-limit reset credits from ChatGPT's
   usage document, looked up every 15 minutes (the lookup also records windows):
-  `{"available": 1, "applicable": 0, "checked_at": "2026-10-26T12:00:00Z"}`.
+  `{"available": 1, "applicable": 0, "checked_at": "2026-10-26T12:00:00Z", "expiries": ["2026-11-25T12:00:00Z"]}`.
   `available`: credits held. `applicable`: credits usable now, against a reached
-  limit. `null` before the first lookup, when the account reports none, and for
+  limit. `expiries`: when held credits expire, soonest first, from ChatGPT's
+  reset-credit list (read only while credits are held). It can be shorter than
+  `available`: a credit without an expiry, or a failed list lookup, adds none.
+  `null` before the first lookup, when the account reports none, and for
   other providers.
 - `observed_at`: time of the latest usage snapshot, else `null`.
 - `next_pick`: the credential the strategy would choose for a new conversation

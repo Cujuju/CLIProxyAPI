@@ -251,7 +251,11 @@ func desktopResetCredits(auth *coreauth.Auth) gin.H {
 	if !ok {
 		return nil
 	}
-	return gin.H{"available": credits.Available, "applicable": credits.Applicable, "checked_at": credits.CheckedAt.UTC()}
+	expiries := make([]time.Time, len(credits.Expiries))
+	for i, at := range credits.Expiries {
+		expiries[i] = at.UTC()
+	}
+	return gin.H{"available": credits.Available, "applicable": credits.Applicable, "checked_at": credits.CheckedAt.UTC(), "expiries": expiries}
 }
 
 // latestQuotaSnapshot is when the newer of the response and lookup snapshots was taken.

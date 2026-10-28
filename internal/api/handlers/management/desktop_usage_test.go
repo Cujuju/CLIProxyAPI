@@ -224,9 +224,11 @@ func TestDesktopPlanReportsCodexPlanWithoutMultiple(t *testing.T) {
 func TestDesktopResetCreditsReportsStoredLookup(t *testing.T) {
 	auth := &coreauth.Auth{Provider: "codex", Metadata: map[string]any{
 		"reset_credits_available": float64(1), "reset_credits_applicable": float64(0), "reset_credits_checked_at": "2026-10-26T12:00:00Z",
+		"reset_credits_expiries": []any{"2026-11-15T08:30:00Z"},
 	}}
 	got := desktopResetCredits(auth)
-	if got == nil || got["available"] != 1 || got["applicable"] != 0 {
+	expiries, _ := got["expiries"].([]time.Time)
+	if got == nil || got["available"] != 1 || got["applicable"] != 0 || len(expiries) != 1 || !expiries[0].Equal(time.Date(2026, 11, 15, 8, 30, 0, 0, time.UTC)) {
 		t.Fatalf("reset credits = %+v", got)
 	}
 	if desktopResetCredits(&coreauth.Auth{Provider: "codex", Metadata: map[string]any{}}) != nil {

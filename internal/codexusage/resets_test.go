@@ -18,6 +18,10 @@ type fixture struct {
 	calls   map[string]int
 	body    string
 	failing bool
+	// creditCalls, creditsBody and creditsFailing are the reset-credit list's counterparts.
+	creditCalls    map[string]int
+	creditsBody    string
+	creditsFailing bool
 }
 
 func newFixture(t *testing.T, auths ...*coreauth.Auth) *fixture {
@@ -30,12 +34,20 @@ func newFixture(t *testing.T, auths ...*coreauth.Auth) *fixture {
 			t.Fatal(errRegister)
 		}
 	}
-	f := &fixture{manager: manager, now: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC), calls: map[string]int{},
-		body: `{"plan_type":"plus","rate_limit_reset_credits":{"available_count":1,"applicable_available_count":0}}`}
+	f := &fixture{manager: manager, now: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC), calls: map[string]int{}, creditCalls: map[string]int{},
+		body:        `{"plan_type":"plus","rate_limit_reset_credits":{"available_count":1,"applicable_available_count":0}}`,
+		creditsBody: `{"credits":[]}`}
 	f.tracker = NewTracker(manager, func() *config.Config { return cfg })
 	f.tracker.spacing = 0
 	f.tracker.now = func() time.Time { return f.now }
-	f.tracker.fetch = func(_ context.Context, _ *config.Config, auth *coreauth.Auth) ([]byte, error) {
+	f.tracker.fetch = func(_ context.Context, _ *config.Config, auth *coreauth.Auth, url string) ([]byte, error) {
+		if url == creditsURL {
+			f.creditCalls[auth.ID]++
+			if f.creditsFailing {
+				return nil, errors.New("credit list unavailable")
+			}
+			return []byte(f.creditsBody), nil
+		}
 		f.calls[auth.ID]++
 		if f.failing {
 			return nil, errors.New("upstream unavailable")
@@ -177,6 +189,69 @@ func TestResetCreditsOfReadsCountsAfterAJSONRoundTrip(t *testing.T) {
 	}
 	got, ok := ResetCreditsOf(&coreauth.Auth{Metadata: metadata})
 	if !ok || got.Available != 2 || got.Applicable != 1 {
+		t.Fatalf("credits = %+v, %v", got, ok)
+	}
+}
+
+// creditList is a reset-credit list in ChatGPT's shape: two unspent credits out of order, plus ones the
+// usage count leaves out (spent, another reset type, no expiry).
+const creditList = `{"credits":[
+	{"id":"c2","reset_type":"codex_rate_limits","status":"available","granted_at":"2026-10-20T00:00:00Z","expires_at":"2026-12-01T08:30:00.123Z"},
+	{"id":"c1","reset_type":"codex_rate_limits","status":"available","granted_at":"2026-10-01T00:00:00Z","expires_at":"2026-11-15T08:30:00Z"},
+	{"id":"c3","reset_type":"codex_rate_limits","status":"redeemed","expires_at":"2026-11-01T00:00:00Z"},
+	{"id":"c4","reset_type":"other","status":"available","expires_at":"2026-11-02T00:00:00Z"},
+	{"id":"c5","reset_type":"codex_rate_limits","status":"available"}]}`
+
+func TestRefreshStoresUnspentCreditExpiriesSoonestFirst(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	f.body = `{"rate_limit_reset_credits":{"available_count":3,"applicable_available_count":1}}`
+	f.creditsBody = creditList
+	if failures := f.tracker.RefreshAll(context.Background()); len(failures) != 0 {
+		t.Fatalf("failures = %v", failures)
+	}
+	got, ok := f.credits(t, "a")
+	want := []time.Time{time.Date(2026, 11, 15, 8, 30, 0, 0, time.UTC), time.Date(2026, 12, 1, 8, 30, 0, 0, time.UTC)}
+	if !ok || got.Available != 3 || len(got.Expiries) != len(want) {
+		t.Fatalf("credits = %+v, %v", got, ok)
+	}
+	for i, at := range want {
+		if !got.Expiries[i].Equal(at) {
+			t.Fatalf("expiry %d = %v, want %v", i, got.Expiries[i], at)
+		}
+	}
+}
+
+func TestRefreshSkipsTheCreditListWhenNoneAreHeld(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	f.body = `{"rate_limit_reset_credits":{"available_count":0,"applicable_available_count":0}}`
+	f.tracker.RefreshAll(context.Background())
+	if f.creditCalls["a"] != 0 {
+		t.Fatalf("credit list read with no credits held: %v", f.creditCalls)
+	}
+}
+
+func TestRefreshKeepsCountsWhenTheCreditListFails(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	f.creditsBody = creditList
+	f.tracker.RefreshAll(context.Background())
+	f.creditsFailing = true
+	if failures := f.tracker.RefreshAll(context.Background()); len(failures) != 0 {
+		t.Fatalf("a failed credit list failed the usage lookup: %v", failures)
+	}
+	got, ok := f.credits(t, "a")
+	if !ok || got.Available != 1 || len(got.Expiries) != 0 {
+		t.Fatalf("credits = %+v, %v; want counts kept and expiries unknown", got, ok)
+	}
+}
+
+func TestResetCreditsOfReadsExpiriesAfterAJSONRoundTrip(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{availableKey: 1, applicableKey: 0, checkedAtKey: "2026-10-26T12:00:00Z", expiriesKey: []string{"2026-11-15T08:30:00Z"}})
+	var metadata map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &metadata); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	got, ok := ResetCreditsOf(&coreauth.Auth{Metadata: metadata})
+	if !ok || len(got.Expiries) != 1 || !got.Expiries[0].Equal(time.Date(2026, 11, 15, 8, 30, 0, 0, time.UTC)) {
 		t.Fatalf("credits = %+v, %v", got, ok)
 	}
 }
