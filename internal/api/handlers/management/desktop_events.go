@@ -15,7 +15,7 @@ import (
 )
 
 // Desktop event stream: GET /v8/management/usage/events pushes each upstream attempt as an SSE
-// "request" event and each recorded usage lookup as "usage", so the desktop refreshes usage only when it changed.
+// "request" event and each recorded quota update as "usage", so the desktop refreshes usage only when it changed.
 
 const (
 	desktopEventsPluginName = "desktop-events"
@@ -126,16 +126,16 @@ func (h *Handler) DesktopEvents(c *gin.Context) {
 	}
 	sub, unsubscribe := desktopEvents.subscribe()
 	defer unsubscribe()
-	// Capacity 1 coalesces lookups that land before the reader catches up into one "usage" event.
-	lookups := make(chan struct{}, 1)
+	// Capacity 1 coalesces quota updates that land before the reader catches up into one "usage" event.
+	updates := make(chan struct{}, 1)
 	if h.authManager != nil {
-		stopLookups := h.authManager.SubscribeQuotaLookups(func() {
+		stopUpdates := h.authManager.SubscribeQuotaUpdates(func() {
 			select {
-			case lookups <- struct{}{}:
+			case updates <- struct{}{}:
 			default:
 			}
 		})
-		defer stopLookups()
+		defer stopUpdates()
 	}
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -165,7 +165,7 @@ func (h *Handler) DesktopEvents(c *gin.Context) {
 			if !write("request", event) {
 				return
 			}
-		case <-lookups:
+		case <-updates:
 			if !write("usage", gin.H{}) {
 				return
 			}

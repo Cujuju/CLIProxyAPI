@@ -41,6 +41,7 @@ func (m *Manager) streamFirstByteTimeout() time.Duration {
 // newFirstByteTimeoutError unless the first payload or upstream error arrives in time. The bound
 // is lifted at the first payload, so long streams are never cut.
 func (m *Manager) executeStreamAttempt(ctx context.Context, executor ProviderExecutor, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	ctx = m.observeStreamQuota(ctx, auth, opts.Headers)
 	return executeStreamWithFirstByteTimeout(ctx, m.streamFirstByteTimeout(), func(attemptCtx context.Context) (*cliproxyexecutor.StreamResult, error) {
 		return executor.ExecuteStream(attemptCtx, auth, req, opts)
 	})

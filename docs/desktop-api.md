@@ -260,8 +260,8 @@ upstream attempt, successful or failed:
 - `user_agent`: the client request's User-Agent header, naming the program that sent it
   (e.g. `claude-cli/…`, `codex_cli_rs/…`); omitted when the client sends none.
 - `event: resync`: the reader fell behind; reload `GET /usage/windows`.
-- `event: usage` (data `{}`): a usage lookup recorded new windows; reload
-  `GET /usage/windows`. Lookups before the reader catches up share one event.
+- `event: usage` (data `{}`): a lookup or live upstream response recorded windows; reload
+  `GET /usage/windows`. Updates before the reader catches up share one event.
 - `: keep-alive` comment lines every 15s.
 
 ## Adding a Claude account (OAuth)

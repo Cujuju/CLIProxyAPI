@@ -11,6 +11,7 @@ import (
 type endpointKey struct{}
 type responseStatusKey struct{}
 type responseHeadersKey struct{}
+type responseHeadersObserverKey struct{}
 type clientRequestMetadataKey struct{}
 
 // ClientRequestMetadata stores immutable downstream request metadata for asynchronous consumers.
@@ -124,9 +125,11 @@ func SetResponseHeaders(ctx context.Context, headers http.Header) {
 		return
 	}
 	holder.mu.Lock()
-	defer holder.mu.Unlock()
 	holder.headers = cloneHTTPHeader(headers)
 	holder.receivedAt = time.Now()
+	snapshot, at := cloneHTTPHeader(holder.headers), holder.receivedAt
+	holder.mu.Unlock()
+	notifyResponseHeaders(ctx, snapshot, at)
 }
 
 // MergeResponseHeaders adds headers observed after the initial HTTP response,
@@ -140,7 +143,6 @@ func MergeResponseHeaders(ctx context.Context, headers http.Header) {
 		return
 	}
 	holder.mu.Lock()
-	defer holder.mu.Unlock()
 	if holder.headers == nil {
 		holder.headers = make(http.Header, len(headers))
 	}
@@ -152,6 +154,9 @@ func MergeResponseHeaders(ctx context.Context, headers http.Header) {
 		holder.headers[canonicalKey] = append([]string(nil), values...)
 	}
 	holder.receivedAt = time.Now()
+	snapshot, at := cloneHTTPHeader(holder.headers), holder.receivedAt
+	holder.mu.Unlock()
+	notifyResponseHeaders(ctx, snapshot, at)
 }
 
 func GetResponseStatus(ctx context.Context) int {

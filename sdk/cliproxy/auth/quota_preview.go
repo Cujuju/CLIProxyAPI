@@ -46,7 +46,7 @@ func (m *Manager) ObserveQuotaLookup(authID string, headers http.Header, lookedU
 	if !m.recordQuotaLookup(authID, headers, lookedUpAt) {
 		return false
 	}
-	m.lookupListeners.notify()
+	m.quotaListeners.notify()
 	return true
 }
 
@@ -62,19 +62,24 @@ func (m *Manager) recordQuotaLookup(authID string, headers http.Header, lookedUp
 	return auth.Quota.ObserveLookupForProvider(auth.Provider, headers, lookedUpAt)
 }
 
-// SubscribeQuotaLookups calls fn after each recorded usage lookup until the
-// returned func is called. fn runs on the lookup's goroutine and must not block.
+// SubscribeQuotaLookups is the compatibility name for SubscribeQuotaUpdates.
 func (m *Manager) SubscribeQuotaLookups(fn func()) (unsubscribe func()) {
-	return m.lookupListeners.add(fn)
+	return m.SubscribeQuotaUpdates(fn)
 }
 
-type quotaLookupListeners struct {
+// SubscribeQuotaUpdates calls fn after a lookup or live response records quota.
+// The callback runs outside manager locks and must not block.
+func (m *Manager) SubscribeQuotaUpdates(fn func()) (unsubscribe func()) {
+	return m.quotaListeners.add(fn)
+}
+
+type quotaUpdateListeners struct {
 	mu     sync.Mutex
 	nextID int
 	byID   map[int]func()
 }
 
-func (l *quotaLookupListeners) add(fn func()) func() {
+func (l *quotaUpdateListeners) add(fn func()) func() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.byID == nil {
@@ -90,7 +95,7 @@ func (l *quotaLookupListeners) add(fn func()) func() {
 	}
 }
 
-func (l *quotaLookupListeners) notify() {
+func (l *quotaUpdateListeners) notify() {
 	l.mu.Lock()
 	fns := make([]func(), 0, len(l.byID))
 	for _, fn := range l.byID {
