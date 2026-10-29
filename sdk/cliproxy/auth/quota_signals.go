@@ -31,6 +31,8 @@ func ProviderSupportsQuotaObservation(provider string) bool {
 // accumulating signals across responses would leave an expired value visible
 // indefinitely. Responses that carry no quota signal at all (transport
 // failures, 5xx, unrelated endpoints) leave the previous snapshot untouched.
+// A snapshot older than the current one is ignored, so a long stream that
+// finishes after a newer response cannot restore its outdated watermark.
 //
 // This function only ever touches ObservedAt and Signals. Cooldown and
 // scheduling fields are never read or written here.
@@ -47,6 +49,9 @@ func (q *QuotaState) ObserveResponseHeadersForProvider(provider string, headers 
 	}
 	if observedAt.IsZero() {
 		observedAt = time.Now()
+	}
+	if observedAt.Before(q.ObservedAt) {
+		return false
 	}
 	q.Signals = next
 	q.ObservedAt = observedAt
