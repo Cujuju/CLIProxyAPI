@@ -46,23 +46,32 @@ type quotaLimit struct {
 	Window time.Duration
 }
 
-// classifyQuotaExhaustion marks a model cooldown as a final usage limit when every eligible
-// credential carries explicit quota evidence. Mixed pools keep the retryable cooldown.
+// classifyQuotaExhaustion turns a selection failure into a final usage limit when the pool is
+// out of quota. A pool with no quota-cooling credential keeps its error.
 func (m *Manager) classifyQuotaExhaustion(err error, providers []string, model string) error {
 	var cooldown *modelCooldownError
-	if err == nil || model == "" || !errors.As(err, &cooldown) || cooldown == nil {
+	isCooldown := errors.As(err, &cooldown) && cooldown != nil
+	var unavailable *authUnavailableError
+	if err == nil || model == "" || (!isCooldown && !errors.As(err, &unavailable)) {
 		return err
 	}
 	limit, ok := poolQuotaLimit(m.snapshotAuths(), providers, model, time.Now())
 	if !ok {
 		return err
 	}
-	cooldown.usageLimit = limit
-	return err
+	if isCooldown {
+		cooldown.usageLimit = limit
+		return err
+	}
+	// Spent credentials beside ones blocked for other reasons select as unavailable (503).
+	usageLimit := newModelCooldownErrorWithCause(model, "", time.Until(limit.ResetsAt), err)
+	usageLimit.usageLimit = limit
+	return usageLimit
 }
 
-// poolQuotaLimit returns when the first eligible credential gets allowance back, and false
-// unless every eligible credential is exhausted by explicit evidence.
+// poolQuotaLimit returns when the first eligible credential can serve again, and false unless
+// that is a quota reset: at least one credential is exhausted by explicit evidence, and every
+// other one is out for good or blocked until after that reset.
 func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Time) (quotaLimit, bool) {
 	wanted := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
@@ -70,7 +79,7 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 	}
 	reg := registry.GetGlobalRegistry()
 	var earliest quotaLimit
-	eligible := 0
+	var otherRecovery time.Time
 	for _, auth := range auths {
 		if auth == nil || auth.Disabled || auth.Status == StatusDisabled {
 			continue
@@ -78,16 +87,29 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 		if _, ok := wanted[canonicalSchedulingProvider(auth.Provider)]; !ok || !reg.ClientSupportsModel(auth.ID, model) {
 			continue
 		}
-		eligible++
-		limit, exhausted := credentialQuotaLimit(auth, model, now)
-		if !exhausted {
+		if limit, exhausted := credentialQuotaLimit(auth, model, now); exhausted {
+			if earliest.ResetsAt.IsZero() || limit.ResetsAt.Before(earliest.ResetsAt) {
+				earliest = limit
+			}
+			continue
+		}
+		if hasUnauthorizedAuthFailure(auth) {
+			// Rejected login with no refresh pending: it serves nothing until someone signs in again.
+			continue
+		}
+		blocked, _, next := isAuthBlockedForModel(auth, model, now)
+		if !blocked || next.IsZero() {
+			// Usable now, or blocked with no known end (such as a pending token refresh).
 			return quotaLimit{}, false
 		}
-		if earliest.ResetsAt.IsZero() || limit.ResetsAt.Before(earliest.ResetsAt) {
-			earliest = limit
+		if otherRecovery.IsZero() || next.Before(otherRecovery) {
+			otherRecovery = next
 		}
 	}
-	return earliest, eligible > 0
+	if earliest.ResetsAt.IsZero() || (!otherRecovery.IsZero() && otherRecovery.Before(earliest.ResetsAt)) {
+		return quotaLimit{}, false
+	}
+	return earliest, true
 }
 
 // credentialQuotaLimit reports explicit exhaustion: a spent account-wide usage window, a
