@@ -31,6 +31,10 @@ var explicitQuotaErrorCodes = map[string]struct{}{
 // quotaWindowRejectedStatus is the upstream window status once its allowance is spent.
 const quotaWindowRejectedStatus = "rejected"
 
+// credentialQuotaReason marks a credential-wide cooldown, set only by an explicit usage limit
+// (a Claude 5h/7d rejection or a Codex usage limit).
+const credentialQuotaReason = "credential_quota"
+
 // fullWindowPercent is a window with nothing left.
 const fullWindowPercent = 100
 
@@ -86,18 +90,34 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 	return earliest, eligible > 0
 }
 
-// credentialQuotaLimit reports explicit exhaustion: a spent account-wide usage window, or a
-// quota cooldown whose last upstream error carries an explicit quota code.
+// credentialQuotaLimit reports explicit exhaustion: a spent account-wide usage window, a
+// credential-wide usage-limit cooldown, or a quota cooldown whose last upstream error carries an
+// explicit quota code.
 func credentialQuotaLimit(auth *Auth, model string, now time.Time) (quotaLimit, bool) {
 	var latest quotaLimit
+	var lapsedWindow time.Duration
 	for _, window := range QuotaWindows(auth, now) {
-		if window.Scoped || !window.ResetsAt.After(now) {
+		spent := window.Status == quotaWindowRejectedStatus || (window.UsedPercent != nil && *window.UsedPercent >= fullWindowPercent)
+		if window.Scoped || !spent {
 			continue
 		}
-		spent := window.Status == quotaWindowRejectedStatus || (window.UsedPercent != nil && *window.UsedPercent >= fullWindowPercent)
-		if spent && window.ResetsAt.After(latest.ResetsAt) {
+		if !window.ResetsAt.After(now) {
+			lapsedWindow = max(lapsedWindow, window.Duration)
+			continue
+		}
+		if window.ResetsAt.After(latest.ResetsAt) {
 			latest = quotaLimit{ResetsAt: window.ResetsAt, Window: window.Duration}
 		}
+	}
+	// The usage-limit cooldown runs past the window reset by the executor's random grace, and the
+	// credential stays benched until it ends, so that end is the credential's real reset.
+	if auth.Quota.Exceeded && auth.Quota.Reason == credentialQuotaReason &&
+		auth.Quota.NextRecoverAt.After(now) && auth.Quota.NextRecoverAt.After(latest.ResetsAt) {
+		window := latest.Window
+		if latest.ResetsAt.IsZero() {
+			window = lapsedWindow
+		}
+		latest = quotaLimit{ResetsAt: auth.Quota.NextRecoverAt, Window: window}
 	}
 	if !latest.ResetsAt.IsZero() {
 		return latest, true

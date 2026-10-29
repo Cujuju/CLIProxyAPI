@@ -172,3 +172,62 @@ func TestExecuteStream_ExhaustingRequestReturnsUsageLimit(t *testing.T) {
 	}
 	assertUsageLimit(t, err, reset)
 }
+
+// credentialLimitAuth is a Claude credential benched by a unified 5h rejection until recoverAt.
+func credentialLimitAuth(t *testing.T, id string, signals map[string]string, recoverAt time.Time) *Auth {
+	return registerExhaustionAuth(t, &Auth{ID: id, Provider: "claude", Status: StatusActive, Quota: QuotaState{
+		Exceeded: true, Reason: credentialQuotaReason, NextRecoverAt: recoverAt, Signals: signals,
+	}})
+}
+
+// After the window resets, the cooldown's random grace still benches the credential; the pool
+// must keep answering as a usage limit that resets when the grace ends (issue #62).
+func TestCredentialQuotaLimit_CooldownGraceAfterWindowReset(t *testing.T) {
+	now := time.Now()
+	recoverAt := now.Add(20 * time.Second)
+	cases := []struct {
+		name       string
+		signals    map[string]string
+		wantWindow time.Duration
+	}{
+		{"spent window already reset", map[string]string{
+			"Anthropic-Ratelimit-Unified-5h-Status": "rejected",
+			"Anthropic-Ratelimit-Unified-5h-Reset":  strconv.FormatInt(now.Add(-10*time.Second).Unix(), 10),
+		}, fiveHourWindow},
+		{"lookup already reports the new window", map[string]string{
+			"Anthropic-Ratelimit-Unified-5h-Status":      "allowed",
+			"Anthropic-Ratelimit-Unified-5h-Utilization": "0",
+		}, 0},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			auth := credentialLimitAuth(t, "grace-"+strconv.Itoa(i), tc.signals, recoverAt)
+			got, ok := credentialQuotaLimit(auth, exhaustionTestModel, now)
+			if !ok || !got.ResetsAt.Equal(recoverAt) || got.Window != tc.wantWindow {
+				t.Fatalf("got %+v %v, want reset %v window %v", got, ok, recoverAt, tc.wantWindow)
+			}
+		})
+	}
+}
+
+// A live spent window resets before its cooldown ends; the later instant is the real reset.
+func TestCredentialQuotaLimit_ReportsCooldownEndPastWindowReset(t *testing.T) {
+	now := time.Now()
+	windowReset := now.Add(time.Hour).Truncate(time.Second)
+	recoverAt := windowReset.Add(25 * time.Second)
+	auth := credentialLimitAuth(t, "grace-live", map[string]string{
+		"Anthropic-Ratelimit-Unified-5h-Status": "rejected",
+		"Anthropic-Ratelimit-Unified-5h-Reset":  strconv.FormatInt(windowReset.Unix(), 10),
+	}, recoverAt)
+	if got, ok := credentialQuotaLimit(auth, exhaustionTestModel, now); !ok || !got.ResetsAt.Equal(recoverAt) || got.Window != fiveHourWindow {
+		t.Fatalf("got %+v %v, want reset %v in a five-hour window", got, ok, recoverAt)
+	}
+}
+
+// A model-level rate-limit cooldown is not a usage limit, however long it runs.
+func TestCredentialQuotaLimit_ModelCooldownIsNotEvidence(t *testing.T) {
+	auth := cooldownAuth(t, "grace-rate", `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`, time.Now().Add(time.Minute))
+	if _, ok := credentialQuotaLimit(auth, exhaustionTestModel, time.Now()); ok {
+		t.Fatal("rate-limit cooldown classified as a usage limit")
+	}
+}
