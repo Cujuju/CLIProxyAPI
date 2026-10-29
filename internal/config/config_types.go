@@ -501,6 +501,12 @@ type RoutingConfig struct {
 	//     auth errors (429, 401/402/403, 404/model support, invalid_grant) rebind as normal.
 	// Ignored when SessionAffinity is false.
 	SessionAffinityRebindOn string `yaml:"session-affinity-rebind-on,omitempty" json:"session-affinity-rebind-on,omitempty"`
+
+	// SessionAffinityHold keeps a conversation on its spent credential, answering a usage limit
+	// with that credential's reset, when the reset is at most this far away and the prompt cache
+	// the request declares would outlive the wait. Moving would re-send the whole context.
+	// Duration string like "30m"; empty or zero turns it off. Ignored when SessionAffinity is false.
+	SessionAffinityHold string `yaml:"session-affinity-hold,omitempty" json:"session-affinity-hold,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.
