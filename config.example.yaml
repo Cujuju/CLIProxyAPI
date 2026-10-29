@@ -197,6 +197,11 @@ routing:
   #     errors (429, 401/402/403, 404/model support, invalid_grant) rebind as normal.
   # Ignored when routing.session-affinity is false.
   session-affinity-rebind-on: "any"
+  # Keep a conversation on its spent credential instead of moving it, answering a usage limit
+  # with that credential's reset, when the reset is at most this far away and the prompt cache
+  # the request declares (Claude cache_control ttl) would still be alive at the reset.
+  # Empty or "0" turns it off (default). Ignored when routing.session-affinity is false.
+  # session-affinity-hold: "45m"
   # What a provider server failure does: 408, any 5xx (including Anthropic's 529 overload and the
   # first-byte timeout), an empty stream, or a dropped connection.
   #   - "failover" (default): try the next credential; the failed one cools down.

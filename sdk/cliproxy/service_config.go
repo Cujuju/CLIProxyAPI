@@ -60,6 +60,7 @@ type routingRuntimeState struct {
 	sessionAffinityTTL       time.Duration
 	sessionAffinitySubagents bool
 	sessionAffinityRebindOn  string
+	sessionAffinityHold      time.Duration
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
@@ -96,6 +97,11 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	if state.sessionAffinity && strings.EqualFold(strings.TrimSpace(cfg.Routing.SessionAffinityRebindOn), coreauth.SessionAffinityRebindOnQuota) {
 		state.sessionAffinityRebindOn = coreauth.SessionAffinityRebindOnQuota
 	}
+	if hold := strings.TrimSpace(cfg.Routing.SessionAffinityHold); state.sessionAffinity && hold != "" {
+		if parsed, errParse := time.ParseDuration(hold); errParse == nil && parsed > 0 {
+			state.sessionAffinityHold = parsed
+		}
+	}
 	return state
 }
 
@@ -118,6 +124,7 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 			TTL:              state.sessionAffinityTTL,
 			SubagentAffinity: &subagents,
 			RebindOn:         state.sessionAffinityRebindOn,
+			Hold:             state.sessionAffinityHold,
 		})
 	}
 	return selector

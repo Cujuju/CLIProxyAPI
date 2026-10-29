@@ -943,6 +943,9 @@ type SessionAffinitySelector struct {
 	matcher           *cliproxysession.MerklePrefixMatcher
 	subagentAffinity  bool
 	rebindOnQuotaOnly bool
+	// hold is the longest wait for a spent bound credential's reset; zero never holds.
+	hold   time.Duration
+	served servedSessions
 }
 
 const (
@@ -1074,6 +1077,8 @@ type SessionAffinityConfig struct {
 	TTL              time.Duration
 	SubagentAffinity *bool
 	RebindOn         string
+	// Hold is the longest a session waits for its spent credential's reset instead of moving.
+	Hold time.Duration
 }
 
 // NewSessionAffinitySelector creates a new session-aware selector.
@@ -1103,6 +1108,7 @@ func NewSessionAffinitySelectorWithConfig(cfg SessionAffinityConfig) *SessionAff
 		matcher:           cliproxysession.NewMerklePrefixMatcher(cfg.TTL),
 		subagentAffinity:  subagentAffinity,
 		rebindOnQuotaOnly: rebindOnQuotaOnly,
+		hold:              max(cfg.Hold, 0),
 	}
 }
 
@@ -1784,6 +1790,11 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 		if fallbackKey != "" {
 			s.cache.Touch(fallbackKey, res.AuthID)
 		}
+		s.served.record(cacheKey, time.Now(), s.cache.ttl)
+		return
+	}
+	if s.hold > 0 && statusCodeFromResult(res.Error) == http.StatusTooManyRequests {
+		// Keep the binding: the next pick either holds the session for its reset or rebinds it.
 		return
 	}
 
