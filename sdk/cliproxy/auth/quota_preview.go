@@ -62,11 +62,6 @@ func (m *Manager) recordQuotaLookup(authID string, headers http.Header, lookedUp
 	return auth.Quota.ObserveLookupForProvider(auth.Provider, headers, lookedUpAt)
 }
 
-// SubscribeQuotaLookups is the compatibility name for SubscribeQuotaUpdates.
-func (m *Manager) SubscribeQuotaLookups(fn func()) (unsubscribe func()) {
-	return m.SubscribeQuotaUpdates(fn)
-}
-
 // SubscribeQuotaUpdates calls fn after a lookup or live response records quota.
 // The callback runs outside manager locks and must not block.
 func (m *Manager) SubscribeQuotaUpdates(fn func()) (unsubscribe func()) {

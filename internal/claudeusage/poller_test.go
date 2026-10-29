@@ -167,7 +167,7 @@ func TestLookupWindowsSurviveResponseHeaders(t *testing.T) {
 			`"monthly_spend":{"utilization":20,"limit_dollars":100}}`), nil
 	}
 	notified := 0
-	stop := f.manager.SubscribeQuotaLookups(func() { notified++ })
+	stop := f.manager.SubscribeQuotaUpdates(func() { notified++ })
 	defer stop()
 	f.poller.RefreshStale(context.Background())
 	if notified != 1 {
