@@ -5,6 +5,7 @@ package claudeusage
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ const (
 	signalPrefix = "Anthropic-Ratelimit-Unified-"
 	// percentPerFraction converts usage percent to the header's 0-1 fraction.
 	percentPerFraction = 100
+	// fractionDecimalPlaces is the number of decimal places added by dividing by 100.
+	fractionDecimalPlaces = 2
 	// fableModelName is the scoped weekly model the upstream 7d_oi window tracks.
 	fableModelName = "fable"
 )
@@ -153,7 +156,15 @@ func setWindow(headers http.Header, token string, percent float64, resetsAt, sta
 		return
 	}
 	base := signalPrefix + token + "-"
-	headers.Set(base+"Utilization", strconv.FormatFloat(percent/percentPerFraction, 'f', -1, 64))
+	decimal := strconv.FormatFloat(percent, 'f', -1, 64)
+	fraction, _ := new(big.Rat).SetString(decimal)
+	// Division by 100 adds two decimal places; retain every original decimal digit.
+	decimalPlaces := 0
+	if point := strings.IndexByte(decimal, '.'); point >= 0 {
+		decimalPlaces = len(decimal) - point - 1
+	}
+	fraction.Quo(fraction, big.NewRat(percentPerFraction, 1))
+	headers.Set(base+"Utilization", strings.TrimRight(strings.TrimRight(fraction.FloatString(decimalPlaces+fractionDecimalPlaces), "0"), "."))
 	if at, errParse := time.Parse(time.RFC3339Nano, strings.TrimSpace(resetsAt)); errParse == nil {
 		headers.Set(base+"Reset", strconv.FormatInt(at.Unix(), 10))
 	}

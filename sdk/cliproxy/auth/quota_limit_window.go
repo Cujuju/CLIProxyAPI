@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"math/big"
 	"net/http"
 	"regexp"
 	"sort"
@@ -50,8 +51,10 @@ const (
 	claudeFiveHourToken       = "5h"
 	claudeWeeklyToken         = "7d"
 	claudeWeeklyFableToken    = "7d_oi"
-	hoursPerDay               = 24
-	daysPerWeek               = 7
+	// claudePercentPerFraction scales decimal utilization before float conversion.
+	claudePercentPerFraction = 100
+	hoursPerDay              = 24
+	daysPerWeek              = 7
 	// minutesPerMonthWindow treats any window of at least 28 days as monthly.
 	minutesPerMonthWindow = 28 * hoursPerDay * 60
 	fiveHourWindow        = 5 * time.Hour
@@ -140,8 +143,9 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 		}
 		switch field {
 		case "Utilization":
-			if fraction, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
-				percent := fraction * 100
+			if fraction, ok := new(big.Rat).SetString(strings.TrimSpace(value)); ok {
+				// Keep the upstream decimal exact until the final float64 rounding.
+				percent, _ := fraction.Mul(fraction, big.NewRat(claudePercentPerFraction, 1)).Float64()
 				window.UsedPercent = &percent
 			}
 		case "Reset":

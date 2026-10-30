@@ -1,10 +1,31 @@
 package claudeusage
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
+
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
+
+func TestHeadersFromUsageExactDecimalPercent(t *testing.T) {
+	for _, percent := range []float64{57, 55, 42.37, 0.7} {
+		headers, err := HeadersFromUsage([]byte(fmt.Sprintf(`{"seven_day":{"utilization":%s}}`, strconv.FormatFloat(percent, 'f', -1, 64))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := &coreauth.Auth{Provider: "claude"}
+		a.Quota.ObserveLookupForProvider("claude", headers, time.Now())
+		windows := coreauth.QuotaWindows(a, time.Now())
+		if len(windows) != 1 || windows[0].UsedPercent == nil {
+			t.Fatal("missing utilization")
+		}
+		if got := *windows[0].UsedPercent; got != percent {
+			t.Errorf("lookup %.17g: UsedPercent = %.17g", percent, got)
+		}
+	}
+}
 
 // usageDocument mirrors a live /api/oauth/usage response (values changed).
 const usageDocument = `{
