@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // CredentialCooldownUntil reports when a credential that is currently benched
@@ -43,23 +45,30 @@ func (m *Manager) ObserveQuotaLookup(authID string, headers http.Header, lookedU
 	if m == nil || strings.TrimSpace(authID) == "" || len(headers) == 0 {
 		return false
 	}
-	if !m.recordQuotaLookup(authID, headers, lookedUpAt) {
+	recorded, drift := m.recordQuotaLookup(authID, headers, lookedUpAt)
+	if !recorded {
 		return false
+	}
+	if drift != "" {
+		log.Info(drift)
 	}
 	m.quotaListeners.notify()
 	return true
 }
 
-func (m *Manager) recordQuotaLookup(authID string, headers http.Header, lookedUpAt time.Time) bool {
+func (m *Manager) recordQuotaLookup(authID string, headers http.Header, lookedUpAt time.Time) (recorded bool, drift string) {
 	release := m.lockAuthMutation(authID)
 	defer release()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	auth := m.auths[authID]
 	if auth == nil || lookedUpAt.Before(auth.Quota.LookedUpAt) {
-		return false
+		return false, ""
 	}
-	return auth.Quota.ObserveLookupForProvider(auth.Provider, headers, lookedUpAt)
+	if !auth.Quota.ObserveLookupForProvider(auth.Provider, headers, lookedUpAt) {
+		return false, ""
+	}
+	return true, lookupDriftLine(auth, auth.Quota.LookupSignals, lookedUpAt)
 }
 
 // SubscribeQuotaUpdates calls fn after a lookup or live response records quota.
