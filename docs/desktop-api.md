@@ -248,6 +248,12 @@ upstream attempt, successful or failed:
  "cache_creation_tokens":0,"session_id":"claude:ac980658-…"}
 ```
 
+- `upstream_id`: optional provider response ID: Claude `message.id`,
+  OpenAI/Codex `response.id` or chat completion `id`, Gemini `responseId`.
+  Join it to Claude Code `message.id` or Codex `response_id` in local logs.
+  Omitted when unavailable, including failures before a response. The proxy's
+  `request_id` remains a separate execution identifier.
+
 - `cached_tokens`: cache reads. `cache_creation_tokens`: cache writes. Claude
   counts both apart from `input_tokens`; OpenAI includes `cached_tokens` in
   `input_tokens` and reports no cache writes.

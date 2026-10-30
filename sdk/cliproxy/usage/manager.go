@@ -26,6 +26,8 @@ const AutoServiceTier = "auto"
 type Record struct {
 	// RequestID uniquely identifies this specific model execution instance (UUID v4).
 	RequestID string
+	// UpstreamID is the provider's response identifier, empty when unavailable.
+	UpstreamID string
 	// TraceID identifies the parent inbound HTTP request when available (8-character hex).
 	TraceID string
 	// SelectionID identifies the scheduler selection decision that produced this usage record when available.

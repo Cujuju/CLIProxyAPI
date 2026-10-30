@@ -307,6 +307,9 @@ func (e *DevinExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		return resp, errConsume
 	}
 
+	if respLog != nil && respLog.Usage != nil {
+		reporter.SetUpstreamID(respLog.Usage.RequestID)
+	}
 	if respLog != nil && respLog.Usage != nil && respLog.Usage.ModelName != "" {
 		reporter.SetResponseModel(respLog.Usage.ModelName)
 	}
@@ -985,6 +988,9 @@ func (e *DevinExecutor) streamDevinFramesForAuth(
 		}
 
 		if frameRes.Usage != nil {
+			if reporter != nil {
+				reporter.SetUpstreamID(frameRes.Usage.RequestID)
+			}
 			if finalUsage == nil {
 				finalUsage = frameRes.Usage
 				if reporter != nil && finalUsage.ModelName != "" {

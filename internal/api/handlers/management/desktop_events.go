@@ -29,6 +29,7 @@ const (
 type desktopRequestEvent struct {
 	At          time.Time `json:"at"`
 	RequestID   string    `json:"request_id"`
+	UpstreamID  string    `json:"upstream_id,omitempty"`
 	SelectionID string    `json:"selection_id,omitempty"`
 	TraceID     string    `json:"trace_id,omitempty"`
 	Provider    string    `json:"provider"`
@@ -101,7 +102,7 @@ func (hub *desktopEventHub) HandleUsage(_ context.Context, record coreusage.Reco
 
 func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 	event := desktopRequestEvent{
-		At: record.RequestedAt.UTC(), RequestID: record.RequestID, SelectionID: record.SelectionID, TraceID: record.TraceID, SessionID: record.SessionID,
+		At: record.RequestedAt.UTC(), RequestID: record.RequestID, UpstreamID: record.UpstreamID, SelectionID: record.SelectionID, TraceID: record.TraceID, SessionID: record.SessionID,
 		UserAgent: record.UserAgent, Provider: record.Provider, Model: record.Model, Alias: record.Alias, AuthID: record.AuthID, AuthIndex: record.AuthIndex,
 		Stream: record.Stream, Failed: record.Failed, StatusCode: record.Fail.StatusCode,
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),

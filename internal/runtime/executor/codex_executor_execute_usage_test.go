@@ -73,6 +73,9 @@ func TestCodexExecutorExecutePublishesMainUsageBeforeImageUsage(t *testing.T) {
 				}
 
 				mainRecord := capture.await(t)
+				if mainRecord.UpstreamID != "resp_usage" {
+					t.Fatalf("main upstream ID = %q", mainRecord.UpstreamID)
+				}
 				if mainRecord.Model != "gpt-5.5" || mainRecord.Failed {
 					t.Errorf("main record model = %q, failed = %t", mainRecord.Model, mainRecord.Failed)
 				}
@@ -81,6 +84,9 @@ func TestCodexExecutorExecutePublishesMainUsageBeforeImageUsage(t *testing.T) {
 				}
 				if imageUsage.name == "nonzero" {
 					imageRecord := capture.await(t)
+					if imageRecord.UpstreamID != "resp_usage" {
+						t.Fatalf("image upstream ID = %q", imageRecord.UpstreamID)
+					}
 					if imageRecord.Model != codexDefaultImageToolModel || imageRecord.Failed {
 						t.Errorf("image record model = %q, failed = %t", imageRecord.Model, imageRecord.Failed)
 					}

@@ -167,6 +167,9 @@ func TestDevinStreamRecordsResponseModelFromUsage(t *testing.T) {
 	f7 = protowire.AppendTag(f7, 9, protowire.BytesType)
 	f7 = protowire.AppendString(f7, "gpt-5-6-luna-low")
 
+	f7 = protowire.AppendTag(f7, 8, protowire.BytesType)
+	f7 = protowire.AppendString(f7, "req_devin")
+
 	var f1 []byte
 	f1 = protowire.AppendTag(f1, 7, protowire.BytesType)
 	f1 = protowire.AppendBytes(f1, f7)
@@ -198,6 +201,9 @@ func TestDevinStreamRecordsResponseModelFromUsage(t *testing.T) {
 	}
 
 	record := capture.await(t)
+	if record.UpstreamID != "req_devin" {
+		t.Fatalf("upstream ID = %q", record.UpstreamID)
+	}
 	if record.Model != "devin/swe-2" {
 		t.Fatalf("record model = %q, want devin/swe-2", record.Model)
 	}

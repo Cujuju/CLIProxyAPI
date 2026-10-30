@@ -59,6 +59,9 @@ type UsageReporter struct {
 	ttftSet              bool
 	once                 sync.Once
 
+	upstreamIDMu sync.RWMutex
+	upstreamID   string
+
 	responseModelMu sync.RWMutex
 	// responseModel holds the latest model name reported by the upstream response.
 	responseModel string
@@ -211,10 +214,14 @@ func (r *UsageReporter) accessTokenFingerprint() string {
 	return r.accessTokenHash
 }
 
-// ObserveResponseModel stores the model reported by an upstream response or event and
+// ObserveResponseModel stores the response ID and model from an upstream response or event and
 // ignores payloads without one; the substitution warning is emitted at publish time.
 func (r *UsageReporter) ObserveResponseModel(payload []byte) {
-	if r == nil || r.responseModelFinal.Load() {
+	if r == nil {
+		return
+	}
+	r.SetUpstreamID(extractUpstreamID(payload))
+	if r.responseModelFinal.Load() {
 		return
 	}
 	provider := ""
@@ -234,6 +241,22 @@ func (r *UsageReporter) ObserveResponseModel(payload []byte) {
 	if terminal {
 		r.responseModelFinal.Store(true)
 	}
+}
+
+// SetUpstreamID records a provider response ID; absent IDs never clear an observed ID.
+func (r *UsageReporter) SetUpstreamID(id string) {
+	if r == nil || id == "" {
+		return
+	}
+	r.upstreamIDMu.Lock()
+	r.upstreamID = id
+	r.upstreamIDMu.Unlock()
+}
+
+func (r *UsageReporter) upstreamResponseID() string {
+	r.upstreamIDMu.RLock()
+	defer r.upstreamIDMu.RUnlock()
+	return r.upstreamID
 }
 
 // SetResponseModel sets the reported model directly if valid and not already marked final.
@@ -675,6 +698,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	}
 	return usage.Record{
 		RequestID:            r.requestID,
+		UpstreamID:           r.upstreamResponseID(),
 		TraceID:              r.traceID,
 		SelectionID:          r.selectionID,
 		Provider:             r.provider,
@@ -917,6 +941,7 @@ func resolveUsageAuthType(auth *cliproxyauth.Auth) string {
 
 // StreamUsageBuffer keeps the latest usage detail observed in a stream.
 type StreamUsageBuffer struct {
+	upstreamID    string
 	detail        usage.Detail
 	ok            bool
 	responseModel string
@@ -956,6 +981,9 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 		return
 	}
 
+	if id := extractUpstreamID(payload); id != "" {
+		b.upstreamID = id
+	}
 	hasUsageCandidate := bytes.Contains(payload, openAIStreamUsageMarker)
 	needTier := b.detail.ResponseServiceTier == "" || hasUsageCandidate
 	hasTierCandidate := needTier && bytes.Contains(payload, openAIStreamServiceTierMarker)
@@ -991,6 +1019,9 @@ func (b *StreamUsageBuffer) ObserveClaudeStream(line []byte) {
 	if b == nil {
 		return
 	}
+	if id := extractUpstreamID(line); id != "" {
+		b.upstreamID = id
+	}
 	if b.responseModel == "" {
 		if payload := jsonPayload(line); len(payload) > 0 {
 			if model, _ := extractClaudeResponseModelEvent(payload); model != "" {
@@ -1005,7 +1036,11 @@ func (b *StreamUsageBuffer) ObserveClaudeStream(line []byte) {
 
 // Publish emits the latest observed usage detail, if any.
 func (b *StreamUsageBuffer) Publish(ctx context.Context, reporter *UsageReporter) bool {
-	if b == nil || !b.ok || reporter == nil {
+	if b == nil || reporter == nil {
+		return false
+	}
+	reporter.SetUpstreamID(b.upstreamID)
+	if !b.ok {
 		return false
 	}
 	if b.responseModel != "" && reporter.ResponseModel() == "" {
@@ -1020,6 +1055,7 @@ func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageR
 	if b == nil || reporter == nil {
 		return false
 	}
+	reporter.SetUpstreamID(b.upstreamID)
 	if b.responseModel != "" && reporter.ResponseModel() == "" {
 		reporter.SetResponseModel(b.responseModel)
 	}
