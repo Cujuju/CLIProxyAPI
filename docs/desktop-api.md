@@ -78,7 +78,9 @@ not persisted. The proxy therefore looks up each enabled Claude OAuth
 credential's usage (`GET https://api.anthropic.com/api/oauth/usage`), which also
 reports per-model and spend windows. Lookups are stored apart from header
 readings: traffic updates the windows its headers carry and never removes
-lookup-only windows.
+lookup-only windows. A window both report comes from the newer reading, except
+a response header never lowers a lookup's usage for the same period (headers
+can trail lookups by a point); a newer lookup always wins.
 
 Every minute the proxy looks up credentials with no lookup, one older than 15
 minutes, or a window that reset since the last lookup. Lookups run one at a

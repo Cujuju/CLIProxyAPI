@@ -76,12 +76,12 @@ func QuotaWindows(auth *Auth, now time.Time) []QuotaWindow {
 	var windows []QuotaWindow
 	switch strings.ToLower(strings.TrimSpace(auth.Provider)) {
 	case "claude":
-		windows = newestWindows(
+		windows = mergeQuotaWindows(
 			claudeQuotaWindows(auth.Quota.Signals), auth.Quota.ObservedAt,
 			claudeQuotaWindows(auth.Quota.LookupSignals), auth.Quota.LookedUpAt,
 		)
 	case "codex":
-		windows = newestWindows(
+		windows = mergeQuotaWindows(
 			codexQuotaWindows(auth.Quota.Signals, auth.Quota.ObservedAt), auth.Quota.ObservedAt,
 			codexQuotaWindows(auth.Quota.LookupSignals, auth.Quota.LookedUpAt), auth.Quota.LookedUpAt,
 		)
@@ -98,27 +98,6 @@ func QuotaWindows(auth *Auth, now time.Time) []QuotaWindow {
 		return windows[i].Key < windows[j].Key
 	})
 	return windows
-}
-
-// newestWindows unions the response and lookup windows. A window both report
-// comes from the newer snapshot; one only a lookup reports survives traffic.
-func newestWindows(response []QuotaWindow, observedAt time.Time, lookup []QuotaWindow, lookedUpAt time.Time) []QuotaWindow {
-	older, newer := lookup, response
-	if lookedUpAt.After(observedAt) {
-		older, newer = response, lookup
-	}
-	byKey := make(map[string]QuotaWindow, len(older)+len(newer))
-	for _, window := range older {
-		byKey[window.Key] = window
-	}
-	for _, window := range newer {
-		byKey[window.Key] = window
-	}
-	out := make([]QuotaWindow, 0, len(byKey))
-	for _, window := range byKey {
-		out = append(out, window)
-	}
-	return out
 }
 
 func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
