@@ -9,6 +9,10 @@
 # The compatibility notes at the end show old spellings for existing deployments.
 config-version: 8
 
+# Claude usage lookup after traffic pauses; 0 disables settled lookups.
+usage-lookups:
+  settle-seconds: 60
+
 # Optional model catalog sources: http(s) URLs or absolute local file paths.
 # Each explicit source overrides --local-model; otherwise --local-model uses
 # embedded catalogs, and normal mode uses the official remote sources.

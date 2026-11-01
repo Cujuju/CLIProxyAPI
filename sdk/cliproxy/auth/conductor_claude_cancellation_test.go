@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
@@ -278,6 +280,84 @@ func TestManagerClaudeStreamTailCancellationIsAvailabilityNeutral(t *testing.T) 
 		t.Fatalf("cancellation result = %#v, want request-scoped status 0", results[0].Error)
 	}
 	requireClaudeCancellationNeutral(t, manager, auth.ID, model)
+}
+
+func TestManagerClaudeStreamRequestEndRecordsResponseEnd(t *testing.T) {
+	for _, mode := range []string{"bootstrap cancellation", "normal completion", "no headers"} {
+		t.Run(mode, func(t *testing.T) {
+			source := make(chan cliproxyexecutor.StreamChunk, 1)
+			headersRecorded := make(chan struct{})
+			executor := &claudeCancellationTestExecutor{
+				streamFn: func(ctx context.Context, _ *Auth) (*cliproxyexecutor.StreamResult, error) {
+					if mode != "no headers" {
+						logging.SetResponseHeaders(ctx, http.Header{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.42"}})
+					}
+					close(headersRecorded)
+					return &cliproxyexecutor.StreamResult{Chunks: source}, nil
+				},
+			}
+			manager, auth, model := newClaudeCancellationTestManager(t, executor, nil)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				stream, err := manager.ExecuteStream(ctx, []string{"claude"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{Stream: true})
+				if err == nil {
+					for range stream.Chunks {
+					}
+				}
+				finished <- err
+			}()
+			<-headersRecorded
+			notified := make(chan *Auth, 4)
+			stop := manager.SubscribeQuotaUpdates(func() {
+				current, _ := manager.GetByID(auth.ID)
+				notified <- current
+			})
+			defer stop()
+			if mode == "normal completion" {
+				source <- cliproxyexecutor.StreamChunk{Payload: []byte("first")}
+				close(source)
+				if err := <-finished; err != nil {
+					t.Fatal(err)
+				}
+				current, _ := manager.GetByID(auth.ID)
+				if !current.Quota.ResponseEndedAt.IsZero() {
+					t.Fatal("stream completion stamped before request end")
+				}
+			}
+			endedAfter := time.Now()
+			cancel()
+			if mode != "normal completion" {
+				close(source)
+				select {
+				case <-finished:
+				case <-time.After(time.Second):
+					t.Fatal("stream did not exit on cancellation")
+				}
+			}
+			if mode == "no headers" {
+				current, _ := manager.GetByID(auth.ID)
+				if !current.Quota.ResponseEndedAt.IsZero() {
+					t.Fatal("request without headers stamped response end")
+				}
+				select {
+				case <-notified:
+					t.Fatal("request without headers notified response end")
+				case <-time.After(20 * time.Millisecond):
+				}
+				return
+			}
+			select {
+			case current := <-notified:
+				if current.Quota.ResponseEndedAt.Before(endedAfter) || current.Quota.ResponseEndedAt.After(time.Now()) {
+					t.Fatalf("ResponseEndedAt = %v, want request end", current.Quota.ResponseEndedAt)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("request end did not notify response completion")
+			}
+		})
+	}
 }
 
 func TestManagerClaudeUpstreamFailureStillCoolsCredential(t *testing.T) {

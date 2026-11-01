@@ -54,19 +54,28 @@ func NewPoller(manager *coreauth.Manager, cfg func() *config.Config) *Poller {
 	return &Poller{manager: manager, config: cfg, fetch: fetchUsage, now: time.Now, spacing: requestSpacing, backoff: map[string]time.Time{}}
 }
 
-// Run refreshes stale credentials immediately and then every CheckInterval
-// until ctx ends, or after expiredTokenRetry while a token awaits renewal.
+// Run refreshes stale credentials and wakes for quota updates, pending settle deadlines, or periodic checks.
 func (p *Poller) Run(ctx context.Context) {
+	updates := make(chan struct{}, 1)
+	unsubscribe := p.manager.SubscribeQuotaUpdates(func() {
+		select {
+		case updates <- struct{}{}:
+		default:
+		}
+	})
+	defer unsubscribe()
 	for {
 		delay := CheckInterval
 		if p.RefreshStale(ctx) {
 			delay = expiredTokenRetry
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(p.nextCheckDelay(delay))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-updates:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -177,12 +186,52 @@ func (p *Poller) isStale(auth *coreauth.Auth) bool {
 	if lookedUpAt.IsZero() || now.Sub(lookedUpAt) > MaxLookupAge {
 		return true
 	}
+	settle := p.settleDelay()
+	// A long stream may cause a mid-stream lookup; ending the request that observed its headers restarts the settle wait.
+	activity := quotaActivity(auth.Quota)
+	if settle > 0 && activity.After(lookedUpAt) && !now.Before(activity.Add(settle)) {
+		return true
+	}
 	for _, window := range coreauth.QuotaWindows(auth, now) {
 		if window.ResetsAt.After(lookedUpAt) && !window.ResetsAt.After(now) {
 			return true
 		}
 	}
 	return false
+}
+
+func (p *Poller) settleDelay() time.Duration {
+	cfg := p.config()
+	if cfg == nil {
+		return config.DefaultUsageLookupSettleSeconds * time.Second
+	}
+	return time.Duration(cfg.UsageLookups.EffectiveSettleSeconds()) * time.Second
+}
+
+func (p *Poller) nextCheckDelay(delay time.Duration) time.Duration {
+	settle := p.settleDelay()
+	if settle <= 0 {
+		return delay
+	}
+	now := p.now()
+	for _, auth := range p.manager.List() {
+		activity := quotaActivity(auth.Quota)
+		if !Eligible(auth) || !activity.After(auth.Quota.LookedUpAt) {
+			continue
+		}
+		remaining := activity.Add(settle).Sub(now)
+		if remaining > 0 && remaining < delay {
+			delay = remaining
+		}
+	}
+	return delay
+}
+
+func quotaActivity(quota coreauth.QuotaState) time.Time {
+	if quota.ResponseEndedAt.After(quota.ObservedAt) {
+		return quota.ResponseEndedAt
+	}
+	return quota.ObservedAt
 }
 
 func (p *Poller) inBackoff(authID string) bool {

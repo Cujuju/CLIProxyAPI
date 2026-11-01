@@ -319,6 +319,8 @@ type QuotaState struct {
 	BackoffLevel int `json:"backoff_level,omitempty"`
 	// ObservedAt is the time the current Signals snapshot was observed.
 	ObservedAt time.Time `json:"observed_at,omitempty"`
+	// ResponseEndedAt records when a request that observed live stream headers ends. Settled lookups wait from the later of this and ObservedAt; only ObservedAt orders snapshots.
+	ResponseEndedAt time.Time `json:"response_ended_at,omitempty"`
 	// Signals stores bounded, provider-specific quota watermark values observed
 	// from upstream response headers or websocket quota events. It is a snapshot
 	// of one upstream response, not an accumulation across responses, so an

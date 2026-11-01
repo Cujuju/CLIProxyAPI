@@ -12,6 +12,9 @@ type ServerResponseCompression = ResponseCompressionConfig
 
 // Config represents the application's configuration, loaded from a YAML file.
 type Config struct {
+	// UsageLookups controls settled Claude usage lookups.
+	UsageLookups UsageLookupsConfig `yaml:"usage-lookups" json:"usage-lookups"`
+
 	// ServerResponseCompression is the JSON-visible mirror of the downstream
 	// response compression settings (YAML: server.response-compression).
 	ServerResponseCompression ResponseCompressionConfig `yaml:"-" json:"response-compression"`

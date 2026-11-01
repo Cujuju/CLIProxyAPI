@@ -87,6 +87,10 @@ minutes, or a window that reset since the last lookup. Lookups run one at a
 time, 2s apart. A failed credential is retried after 15 minutes. An expired
 access token is not a failure: the lookup retries 10s later, after renewal.
 
+Claude usage is also looked up once traffic settles: a pause from the last response's end for
+`usage-lookups.settle-seconds` (default 60; 0 or negative disables settled lookups).
+New traffic after a lookup starts another settle wait.
+
 ## GET /usage/windows
 
 ```json

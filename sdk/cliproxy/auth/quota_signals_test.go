@@ -185,6 +185,13 @@ func TestManagerMarkResultRecordsResponseQuotaSignalsInMemory(t *testing.T) {
 		"X-Codex-Primary-Window-Minutes": []string{"10080"},
 		"X-Codex-Primary-Reset-At":       []string{"1782951970"},
 	})
+	headerReceivedAt := internallogging.GetResponseHeadersReceivedAt(ctx)
+	notified := 0
+	stop := manager.SubscribeQuotaUpdates(func() {
+		manager.GetByID(auth.ID)
+		notified++
+	})
+	defer stop()
 	manager.MarkResult(ctx, Result{
 		AuthID:   auth.ID,
 		Provider: "codex",
@@ -195,6 +202,15 @@ func TestManagerMarkResultRecordsResponseQuotaSignalsInMemory(t *testing.T) {
 	updated, ok := manager.GetByID(auth.ID)
 	if !ok || updated == nil {
 		t.Fatal("auth not found after MarkResult")
+	}
+	if !updated.Quota.ObservedAt.Equal(headerReceivedAt) {
+		t.Fatalf("ObservedAt = %v, want header receipt %v", updated.Quota.ObservedAt, headerReceivedAt)
+	}
+	if !updated.Quota.ResponseEndedAt.IsZero() {
+		t.Fatalf("ResponseEndedAt = %v, want no stream request stamp", updated.Quota.ResponseEndedAt)
+	}
+	if notified != 0 {
+		t.Fatalf("completion notifications = %d, want 0", notified)
 	}
 	if updated.Quota.Signals["X-Codex-Active-Limit"] != "codex_bengalfox" ||
 		updated.Quota.Signals["X-Codex-Primary-Used-Percent"] != "2" {
@@ -392,8 +408,11 @@ func TestProviderSupportsQuotaObservation(t *testing.T) {
 }
 
 func TestQuotaStateCloneCopiesSignals(t *testing.T) {
-	original := QuotaState{Signals: map[string]string{"X-Codex-Plan-Type": "pro"}}
+	original := QuotaState{ResponseEndedAt: time.Unix(12, 0), Signals: map[string]string{"X-Codex-Plan-Type": "pro"}}
 	clone := original.Clone()
+	if !clone.ResponseEndedAt.Equal(original.ResponseEndedAt) {
+		t.Fatalf("clone lost response completion: %#v", clone)
+	}
 	clone.Signals["X-Codex-Plan-Type"] = "team"
 	if original.Signals["X-Codex-Plan-Type"] != "pro" {
 		t.Fatalf("mutating cloned quota changed original: %#v", original.Signals)
@@ -402,12 +421,13 @@ func TestQuotaStateCloneCopiesSignals(t *testing.T) {
 
 func TestApplyCooldownFieldsPreservesObservation(t *testing.T) {
 	quota := QuotaState{
-		Exceeded:      true,
-		Reason:        "quota",
-		NextRecoverAt: time.Unix(20, 0),
-		BackoffLevel:  1,
-		ObservedAt:    time.Unix(10, 0),
-		Signals:       map[string]string{"X-Codex-Primary-Used-Percent": "51"},
+		Exceeded:        true,
+		Reason:          "quota",
+		NextRecoverAt:   time.Unix(20, 0),
+		BackoffLevel:    1,
+		ObservedAt:      time.Unix(10, 0),
+		ResponseEndedAt: time.Unix(12, 0),
+		Signals:         map[string]string{"X-Codex-Primary-Used-Percent": "51"},
 	}
 	applyCooldownFields(&quota, QuotaState{
 		Exceeded:      true,
@@ -420,6 +440,9 @@ func TestApplyCooldownFieldsPreservesObservation(t *testing.T) {
 	}
 	if !quota.ObservedAt.Equal(time.Unix(10, 0)) || quota.Signals["X-Codex-Primary-Used-Percent"] != "51" {
 		t.Fatalf("cooldown overwrote the last observation: %#v", quota)
+	}
+	if !quota.ResponseEndedAt.Equal(time.Unix(12, 0)) {
+		t.Fatalf("cooldown overwrote response completion: %#v", quota)
 	}
 }
 

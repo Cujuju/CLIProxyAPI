@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -187,5 +188,109 @@ func TestLookupWindowsSurviveResponseHeaders(t *testing.T) {
 	}
 	if labels["monthly_spend"] != "Spend limit $100" {
 		t.Fatalf("lookup label lost: %v", labels)
+	}
+}
+
+func TestPollerSettledTraffic(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		seconds *int
+		traffic bool
+		elapsed time.Duration
+		want    bool
+	}{
+		{"settled", intPointer(30), true, 30 * time.Second, true},
+		{"pending", intPointer(30), true, 29 * time.Second, false},
+		{"no traffic", intPointer(30), false, time.Minute, false},
+		{"disabled", intPointer(0), true, time.Minute, false},
+		{"negative", intPointer(-1), true, time.Minute, false},
+		{"default pending", nil, true, 59 * time.Second, false},
+		{"default settled", nil, true, 60 * time.Second, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newPollerFixture(t, claudeOAuth("a"))
+			f.poller.config().UsageLookups.SettleSeconds = tt.seconds
+			f.poller.RefreshStale(context.Background())
+			if tt.traffic {
+				f.now = f.now.Add(time.Second)
+				stored, _ := f.manager.GetByID("a")
+				stored.Quota.ObserveResponseHeadersForProvider("claude", map[string][]string{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.2"}}, f.now)
+				if _, err := f.manager.Update(context.Background(), stored); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.now = f.now.Add(tt.elapsed)
+			stored, _ := f.manager.GetByID("a")
+			if got := f.poller.isStale(stored); got != tt.want {
+				t.Fatalf("isStale = %v, want %v", got, tt.want)
+			}
+			f.poller.RefreshStale(context.Background())
+			f.poller.RefreshStale(context.Background())
+			wantCalls := 1
+			if tt.want {
+				wantCalls++
+			}
+			if f.calls["a"] != wantCalls {
+				t.Fatalf("calls = %v, want %d", f.calls, wantCalls)
+			}
+		})
+	}
+}
+
+func intPointer(value int) *int { return &value }
+
+func TestPollerSettlesAfterResponseEnd(t *testing.T) {
+	for _, midStreamLookup := range []bool{false, true} {
+		t.Run(fmt.Sprint("mid-stream lookup=", midStreamLookup), func(t *testing.T) {
+			f := newPollerFixture(t, claudeOAuth("a"))
+			f.poller.config().UsageLookups.SettleSeconds = intPointer(30)
+			stored, _ := f.manager.GetByID("a")
+			stored.Quota.ObservedAt = f.now.Add(-2 * time.Minute)
+			stored.Quota.LookedUpAt = f.now.Add(-3 * time.Minute)
+			if midStreamLookup {
+				stored.Quota.LookedUpAt = f.now.Add(-time.Minute)
+			}
+			stored.Quota.ResponseEndedAt = f.now
+			if _, err := f.manager.Update(context.Background(), stored); err != nil {
+				t.Fatal(err)
+			}
+			f.now = f.now.Add(29 * time.Second)
+			if f.poller.isStale(stored) {
+				t.Fatal("lookup became stale before response end settled")
+			}
+			if got := f.poller.nextCheckDelay(CheckInterval); got != time.Second {
+				t.Fatalf("delay = %v, want 1s", got)
+			}
+			f.now = f.now.Add(time.Second)
+			if !f.poller.isStale(stored) {
+				t.Fatal("response end did not trigger a settled lookup")
+			}
+		})
+	}
+}
+
+func TestPollerNextCheckUsesLiveSettleDeadline(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	f.poller.RefreshStale(context.Background())
+	f.now = f.now.Add(time.Second)
+	stored, _ := f.manager.GetByID("a")
+	stored.Quota.ObserveResponseHeadersForProvider("claude", map[string][]string{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.2"}}, f.now)
+	if _, err := f.manager.Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(10 * time.Second)
+	if got := f.poller.nextCheckDelay(CheckInterval); got != 50*time.Second {
+		t.Fatalf("delay = %v", got)
+	}
+	f.poller.config().UsageLookups.SettleSeconds = intPointer(20)
+	if got := f.poller.nextCheckDelay(CheckInterval); got != 10*time.Second {
+		t.Fatalf("reloaded delay = %v", got)
+	}
+	if got := f.poller.nextCheckDelay(5 * time.Second); got != 5*time.Second {
+		t.Fatalf("token retry delay = %v", got)
+	}
+	f.poller.config().UsageLookups.SettleSeconds = intPointer(0)
+	if got := f.poller.nextCheckDelay(CheckInterval); got != CheckInterval {
+		t.Fatalf("disabled delay = %v", got)
 	}
 }
