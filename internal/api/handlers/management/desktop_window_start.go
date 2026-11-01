@@ -10,6 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/claudeusage"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexusage"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	codexthinking "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/codex"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -75,6 +78,17 @@ func (h *Handler) StartUsageWindow(c *gin.Context) {
 	if errSet != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": errSet.Error()})
 		return
+	}
+	if provider == "codex" {
+		info := registry.LookupModelInfo(model, provider)
+		if info != nil && info.Thinking != nil && len(info.Thinking.Levels) > 0 {
+			// Disabling thinking resolves to the lowest supported effort when required.
+			if config, errThinking := thinking.ValidateConfig(thinking.ThinkingConfig{Mode: thinking.ModeNone}, info, "codex", "codex", false); errThinking == nil {
+				if minimal, errApply := codexthinking.NewApplier().Apply(payload, *config, info); errApply == nil {
+					payload = minimal
+				}
+			}
+		}
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), windowStartTimeout)
 	defer cancel()

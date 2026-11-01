@@ -208,6 +208,7 @@ upstream rejects output caps). Body `{"auth_index": "<auth_index>", "model":
 "<model id>"}`; enabled Claude and Codex logins only. The request runs through
 the normal executor, so login renewal and response-header windows apply.
 Returns `{"usage": <GET /usage/windows payload>}`.
+Codex uses the lowest supported reasoning effort when the model declares levels; otherwise the effort is omitted.
 
 - `400`: missing field, or not an enabled Claude or Codex login. `404`: unknown
   index. `409`: an account-wide `on_use` window is already running.
