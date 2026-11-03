@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -45,9 +46,15 @@ func (m *Manager) ObserveQuotaLookup(authID string, headers http.Header, lookedU
 	if m == nil || strings.TrimSpace(authID) == "" || len(headers) == 0 {
 		return false
 	}
+	if lookedUpAt.IsZero() {
+		lookedUpAt = time.Now()
+	}
 	recorded, drift := m.recordQuotaLookup(authID, headers, lookedUpAt)
 	if !recorded {
 		return false
+	}
+	if _, _, errReset := m.resetQuota(context.Background(), authID, lookedUpAt); errReset != nil {
+		log.Warnf("failed to persist quota lookup recovery: %v", errReset)
 	}
 	if drift != "" {
 		log.Info(drift)

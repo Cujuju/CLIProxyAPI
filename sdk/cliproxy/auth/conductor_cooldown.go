@@ -537,6 +537,12 @@ func dedupeStrings(values []string) []string {
 
 // ResetQuota clears quota/cooldown state for an auth and resumes registry routing.
 func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []string, error) {
+	return m.resetQuota(ctx, authID, time.Time{})
+}
+
+// resetQuota also supports recovery from a recorded lookup. The lookup is checked
+// under the mutation lock so a concurrent failure cannot have its cooldown erased.
+func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time.Time) (*Auth, []string, error) {
 	if m == nil {
 		return nil, nil, nil
 	}
@@ -566,21 +572,28 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
 	}
 
-	for modelKey, state := range auth.ModelStates {
-		if strings.TrimSpace(modelKey) == "" {
-			continue
+	if !lookedUpAt.IsZero() {
+		if !clearQuotaCooldownFromLookup(auth, lookedUpAt, now) {
+			m.mu.Unlock()
+			return nil, nil, nil
 		}
-		models = append(models, modelKey)
-		if state != nil {
-			resetModelState(state, now)
+	} else {
+		for modelKey, state := range auth.ModelStates {
+			if strings.TrimSpace(modelKey) == "" {
+				continue
+			}
+			models = append(models, modelKey)
+			if state != nil {
+				resetModelState(state, now)
+			}
 		}
-	}
-	if clearCooldownStateForAuth(auth, now) {
-		if len(models) == 0 {
-			models = append(models, registeredModels...)
+		if clearCooldownStateForAuth(auth, now) {
+			if len(models) == 0 {
+				models = append(models, registeredModels...)
+			}
+		} else if len(auth.ModelStates) > 0 {
+			updateAggregatedAvailability(auth, now)
 		}
-	} else if len(auth.ModelStates) > 0 {
-		updateAggregatedAvailability(auth, now)
 	}
 
 	if len(models) == 0 {
@@ -626,10 +639,56 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 	if m.scheduler != nil && snapshot != nil {
 		m.scheduler.upsertAuth(snapshot)
 	}
+	if !lookedUpAt.IsZero() {
+		logEntryWithRequestID(ctx).WithField("auth_index", snapshot.EnsureIndex()).WithField("provider", snapshot.Provider).Info("quota cooldown lifted after usage lookup")
+	}
+
 	if errPersist != nil {
 		return nil, nil, errPersist
 	}
 	return snapshot, models, nil
+}
+
+// clearQuotaCooldownFromLookup releases only quota layers older than the lookup.
+func clearQuotaCooldownFromLookup(auth *Auth, lookedUpAt, now time.Time) bool {
+	if auth.Disabled || auth.Status == StatusDisabled || !auth.Quota.LookedUpAt.Equal(lookedUpAt) ||
+		!lookedUpAt.After(auth.UpdatedAt) || (auth.LastError != nil && (auth.LastError.HTTPStatus == http.StatusUnauthorized || strings.EqualFold(auth.LastError.Code, "unauthorized"))) {
+		return false
+	}
+	windows := signalWindows(auth.Provider, auth.Quota.LookupSignals, lookedUpAt)
+	if len(windows) == 0 {
+		return false
+	}
+	for _, window := range windows {
+		if window.Status == quotaWindowRejectedStatus || window.UsedPercent == nil || *window.UsedPercent >= fullWindowPercent {
+			return false
+		}
+	}
+	changed := false
+	if quotaCooldown(auth.Quota) {
+		clearAuthStateOnSuccess(auth, now)
+		changed = true
+	}
+	for _, state := range auth.ModelStates {
+		if state == nil || state.Status == StatusDisabled || !lookedUpAt.After(state.UpdatedAt) || !quotaCooldown(state.Quota) ||
+			(state.LastError != nil && state.LastError.HTTPStatus != http.StatusTooManyRequests && !state.credentialQuotaPropagated && state.Quota.Reason != credentialQuotaReason) {
+			continue
+		}
+		if shadow := state.credentialQuotaShadow; shadow != nil && isModelStateActiveCooldown(shadow, now) {
+			*state = *shadow.cloneShallow()
+		} else {
+			resetModelState(state, now)
+		}
+		changed = true
+	}
+	if changed {
+		updateAggregatedAvailability(auth, now)
+	}
+	return changed
+}
+
+func quotaCooldown(quota QuotaState) bool {
+	return quota.Exceeded && (quota.Reason == "quota" || quota.Reason == credentialQuotaReason)
 }
 
 func modelsForRegisteredAuth(authID string) []string {
