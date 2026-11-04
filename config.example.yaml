@@ -9,7 +9,7 @@
 # The compatibility notes at the end show old spellings for existing deployments.
 config-version: 8
 
-# Claude usage lookup after traffic pauses; 0 disables settled lookups.
+# Minimum interval between Claude lookups when there is new traffic, including steady use; 0 disables traffic-driven lookups.
 usage-lookups:
   settle-seconds: 60
 

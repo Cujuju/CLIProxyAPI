@@ -191,7 +191,7 @@ func TestLookupWindowsSurviveResponseHeaders(t *testing.T) {
 	}
 }
 
-func TestPollerSettledTraffic(t *testing.T) {
+func TestPollerTrafficLookupInterval(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		seconds *int
@@ -199,13 +199,13 @@ func TestPollerSettledTraffic(t *testing.T) {
 		elapsed time.Duration
 		want    bool
 	}{
-		{"settled", intPointer(30), true, 30 * time.Second, true},
-		{"pending", intPointer(30), true, 29 * time.Second, false},
+		{"due", intPointer(30), true, 29 * time.Second, true},
+		{"pending", intPointer(30), true, 28 * time.Second, false},
 		{"no traffic", intPointer(30), false, time.Minute, false},
 		{"disabled", intPointer(0), true, time.Minute, false},
 		{"negative", intPointer(-1), true, time.Minute, false},
-		{"default pending", nil, true, 59 * time.Second, false},
-		{"default settled", nil, true, 60 * time.Second, true},
+		{"default pending", nil, true, 58 * time.Second, false},
+		{"default due", nil, true, 59 * time.Second, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newPollerFixture(t, claudeOAuth("a"))
@@ -239,7 +239,7 @@ func TestPollerSettledTraffic(t *testing.T) {
 
 func intPointer(value int) *int { return &value }
 
-func TestPollerSettlesAfterResponseEnd(t *testing.T) {
+func TestPollerReconcilesResponseEndWithoutRestartingInterval(t *testing.T) {
 	for _, midStreamLookup := range []bool{false, true} {
 		t.Run(fmt.Sprint("mid-stream lookup=", midStreamLookup), func(t *testing.T) {
 			f := newPollerFixture(t, claudeOAuth("a"))
@@ -248,28 +248,29 @@ func TestPollerSettlesAfterResponseEnd(t *testing.T) {
 			stored.Quota.ObservedAt = f.now.Add(-2 * time.Minute)
 			stored.Quota.LookedUpAt = f.now.Add(-3 * time.Minute)
 			if midStreamLookup {
-				stored.Quota.LookedUpAt = f.now.Add(-time.Minute)
+				stored.Quota.LookedUpAt = f.now.Add(-10 * time.Second)
 			}
 			stored.Quota.ResponseEndedAt = f.now
 			if _, err := f.manager.Update(context.Background(), stored); err != nil {
 				t.Fatal(err)
 			}
-			f.now = f.now.Add(29 * time.Second)
-			if f.poller.isStale(stored) {
-				t.Fatal("lookup became stale before response end settled")
+			if midStreamLookup {
+				if f.poller.isStale(stored) {
+					t.Fatal("lookup repeated before its configured interval")
+				}
+				if got := f.poller.nextCheckDelay(CheckInterval); got != 20*time.Second {
+					t.Fatalf("delay = %v, want 20s since the mid-stream lookup", got)
+				}
+				f.now = f.now.Add(20 * time.Second)
 			}
-			if got := f.poller.nextCheckDelay(CheckInterval); got != time.Second {
-				t.Fatalf("delay = %v, want 1s", got)
-			}
-			f.now = f.now.Add(time.Second)
 			if !f.poller.isStale(stored) {
-				t.Fatal("response end did not trigger a settled lookup")
+				t.Fatal("response end did not trigger reconciliation")
 			}
 		})
 	}
 }
 
-func TestPollerNextCheckUsesLiveSettleDeadline(t *testing.T) {
+func TestPollerNextCheckUsesLiveLookupDeadline(t *testing.T) {
 	f := newPollerFixture(t, claudeOAuth("a"))
 	f.poller.RefreshStale(context.Background())
 	f.now = f.now.Add(time.Second)
@@ -279,11 +280,11 @@ func TestPollerNextCheckUsesLiveSettleDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(10 * time.Second)
-	if got := f.poller.nextCheckDelay(CheckInterval); got != 50*time.Second {
+	if got := f.poller.nextCheckDelay(CheckInterval); got != 49*time.Second {
 		t.Fatalf("delay = %v", got)
 	}
 	f.poller.config().UsageLookups.SettleSeconds = intPointer(20)
-	if got := f.poller.nextCheckDelay(CheckInterval); got != 10*time.Second {
+	if got := f.poller.nextCheckDelay(CheckInterval); got != 9*time.Second {
 		t.Fatalf("reloaded delay = %v", got)
 	}
 	if got := f.poller.nextCheckDelay(5 * time.Second); got != 5*time.Second {
@@ -292,5 +293,67 @@ func TestPollerNextCheckUsesLiveSettleDeadline(t *testing.T) {
 	f.poller.config().UsageLookups.SettleSeconds = intPointer(0)
 	if got := f.poller.nextCheckDelay(CheckInterval); got != CheckInterval {
 		t.Fatalf("disabled delay = %v", got)
+	}
+}
+
+func TestPollerContinuousTrafficCannotPostponeLookup(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	f.poller.RefreshStale(context.Background())
+	for i := 1; i <= 20; i++ {
+		f.now = f.now.Add(30 * time.Second)
+		stored, _ := f.manager.GetByID("a")
+		stored.Quota.ObservedAt = f.now
+		stored.Quota.ResponseEndedAt = f.now
+		if _, err := f.manager.Update(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+		f.poller.RefreshStale(context.Background())
+		if want := 1 + i/2; f.calls["a"] != want {
+			t.Fatalf("after %d requests, lookups = %d, want %d", i, f.calls["a"], want)
+		}
+	}
+	// No extra traffic means no extra traffic-driven lookup.
+	f.now = f.now.Add(time.Minute)
+	f.poller.RefreshStale(context.Background())
+	if f.calls["a"] != 11 {
+		t.Fatalf("idle account looked up again: %v", f.calls)
+	}
+}
+
+func TestPollerPreservesResponseEndDuringLookup(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	f.poller.RefreshStale(context.Background())
+	f.now = f.now.Add(time.Minute)
+	stored, _ := f.manager.GetByID("a")
+	stored.Quota.ObservedAt = f.now
+	if _, err := f.manager.Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	fetch := f.poller.fetch
+	f.poller.fetch = func(ctx context.Context, cfg *config.Config, auth *coreauth.Auth) (json.RawMessage, error) {
+		raw, err := fetch(ctx, cfg, auth)
+		f.now = f.now.Add(time.Second)
+		current, _ := f.manager.GetByID(auth.ID)
+		current.Quota.ResponseEndedAt = f.now
+		if _, errUpdate := f.manager.Update(ctx, current); errUpdate != nil {
+			t.Fatal(errUpdate)
+		}
+		f.now = f.now.Add(time.Second)
+		return raw, err
+	}
+	f.poller.RefreshStale(context.Background())
+	stored, _ = f.manager.GetByID("a")
+	if !stored.Quota.ResponseEndedAt.After(stored.Quota.LookedUpAt) {
+		t.Fatal("lookup completion swallowed response-end activity")
+	}
+	f.poller.fetch = fetch
+	f.now = stored.Quota.LookedUpAt.Add(time.Minute)
+	f.poller.RefreshStale(context.Background())
+	if f.calls["a"] != 3 {
+		t.Fatalf("final usage was not reconciled: %v", f.calls)
+	}
+	f.poller.RefreshStale(context.Background())
+	if f.calls["a"] != 3 {
+		t.Fatal("reconciled lookup scheduled itself again")
 	}
 }

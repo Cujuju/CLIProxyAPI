@@ -54,7 +54,7 @@ func NewPoller(manager *coreauth.Manager, cfg func() *config.Config) *Poller {
 	return &Poller{manager: manager, config: cfg, fetch: fetchUsage, now: time.Now, spacing: requestSpacing, backoff: map[string]time.Time{}}
 }
 
-// Run refreshes stale credentials and wakes for quota updates, pending settle deadlines, or periodic checks.
+// Run refreshes stale credentials and wakes for quota updates, pending lookup deadlines, or periodic checks.
 func (p *Poller) Run(ctx context.Context) {
 	updates := make(chan struct{}, 1)
 	unsubscribe := p.manager.SubscribeQuotaUpdates(func() {
@@ -97,7 +97,7 @@ func (p *Poller) RefreshStale(ctx context.Context) (awaitingToken bool) {
 			continue
 		}
 		if errRefresh != nil {
-			log.Debugf("claude usage lookup for %s failed: %v", auth.ID, errRefresh)
+			log.Warnf("claude usage lookup for auth_index=%s failed (retry in %s): %v", auth.EnsureIndex(), FailureBackoff, errRefresh)
 		}
 		p.wait(ctx)
 	}
@@ -141,11 +141,13 @@ func (p *Poller) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	// Conservatively date the snapshot before fetching so activity during the lookup still needs reconciliation.
+	lookedUpAt := p.now()
 	raw, errFetch := p.fetch(lookupCtx, p.config(), auth)
 	if errFetch == nil {
 		headers, errConvert := HeadersFromUsage(raw)
 		if errConvert == nil {
-			p.manager.ObserveQuotaLookup(auth.ID, headers, p.now())
+			p.manager.ObserveQuotaLookup(auth.ID, headers, lookedUpAt)
 			p.setBackoff(auth.ID, time.Time{})
 			return nil
 		}
@@ -187,9 +189,9 @@ func (p *Poller) isStale(auth *coreauth.Auth) bool {
 		return true
 	}
 	settle := p.settleDelay()
-	// A long stream may cause a mid-stream lookup; ending the request that observed its headers restarts the settle wait.
+	// New traffic requires reconciliation even if requests never pause. Request end also catches a long stream's final cost.
 	activity := quotaActivity(auth.Quota)
-	if settle > 0 && activity.After(lookedUpAt) && !now.Before(activity.Add(settle)) {
+	if settle > 0 && activity.After(lookedUpAt) && !now.Before(lookedUpAt.Add(settle)) {
 		return true
 	}
 	for _, window := range coreauth.QuotaWindows(auth, now) {
@@ -219,7 +221,7 @@ func (p *Poller) nextCheckDelay(delay time.Duration) time.Duration {
 		if !Eligible(auth) || !activity.After(auth.Quota.LookedUpAt) {
 			continue
 		}
-		remaining := activity.Add(settle).Sub(now)
+		remaining := auth.Quota.LookedUpAt.Add(settle).Sub(now)
 		if remaining > 0 && remaining < delay {
 			delay = remaining
 		}

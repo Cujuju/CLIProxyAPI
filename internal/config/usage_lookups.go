@@ -1,9 +1,9 @@
 package config
 
-// DefaultUsageLookupSettleSeconds is the chosen pause marking a finished turn; longer gaps between requests within a turn cost one extra lookup.
+// DefaultUsageLookupSettleSeconds bounds active-account lookup age without polling Anthropic for every response.
 const DefaultUsageLookupSettleSeconds = 60
 
-// UsageLookupsConfig controls settled Claude usage lookups.
+// UsageLookupsConfig controls traffic-driven Claude usage lookups. The legacy YAML key remains compatible.
 type UsageLookupsConfig struct {
 	SettleSeconds *int `yaml:"settle-seconds,omitempty" json:"settle-seconds,omitempty"`
 }

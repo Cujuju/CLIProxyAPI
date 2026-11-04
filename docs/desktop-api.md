@@ -87,9 +87,15 @@ minutes, or a window that reset since the last lookup. Lookups run one at a
 time, 2s apart. A failed credential is retried after 15 minutes. An expired
 access token is not a failure: the lookup retries 10s later, after renewal.
 
-Claude usage is also looked up once traffic settles: a pause from the last response's end for
-`usage-lookups.settle-seconds` (default 60; 0 or negative disables settled lookups).
-New traffic after a lookup starts another settle wait.
+Claude usage is also reconciled when an account has new response headers or a
+response ends after its last lookup. `usage-lookups.settle-seconds` is the minimum
+interval since that lookup (default 60; 0 or negative disables traffic-driven
+lookups). Continuing traffic does not postpone the deadline. Response completion
+after a mid-stream lookup schedules another lookup to capture the final usage.
+Lookup timestamps use request start so activity during the lookup remains pending.
+An account update during a lookup prevents that lookup from clearing its cooldown;
+a later lookup revalidates it. With no further traffic, this uses the 15-minute schedule.
+The legacy setting name is retained for existing configurations.
 
 ## GET /usage/windows
 
