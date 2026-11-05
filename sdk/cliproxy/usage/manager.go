@@ -37,9 +37,16 @@ type Record struct {
 	BaseURL string
 	// ExecutorType stores the concrete executor type that handled the request.
 	ExecutorType string
-	Model        string
-	Alias        string
-	APIKey       string
+	// DownstreamTransport and UpstreamTransport describe observed transports for
+	// this execution attempt: http, websocket, or websocket+http. Empty is unknown.
+	DownstreamTransport string
+	UpstreamTransport   string
+	// TransportFallbackReason is a stable code for an observed transport fallback
+	// or failed upgrade. It never contains upstream error text or request bodies.
+	TransportFallbackReason string
+	Model                   string
+	Alias                   string
+	APIKey                  string
 	// IsNativeKey reports whether the client API key was authenticated by CPA's native config provider.
 	IsNativeKey bool
 	// AccessProvider identifies the client request authentication provider (e.g. "config-inline" or plugin ID).
