@@ -270,6 +270,18 @@ upstream attempt, successful or failed:
 - `cached_tokens`: cache reads. `cache_creation_tokens`: cache writes. Claude
   counts both apart from `input_tokens`; OpenAI includes `cached_tokens` in
   `input_tokens` and reports no cache writes.
+- `alias`: optional client-requested model/alias; `model` is the effective upstream
+  request model. Keep them separate when displaying requested versus effective routing.
+- `reasoning_effort`: optional effective effort extracted from the final translated
+  and configured upstream payload (including a numeric thinking budget where applicable).
+  Omitted means unknown, not a default effort. Do not backfill it from current settings.
+- `parent_session_id`: optional parent conversation for a subagent execution.
+- `trace_id`: optional inbound request trace identifier, shared by its execution attempts.
+- `downstream_transport` and `upstream_transport`: optional observed transports per
+  execution attempt, `http`, `websocket`, or `websocket+http` if both were actually
+  observed within that attempt. Empty/omitted means unknown; `stream` does not imply WebSocket.
+- `transport_fallback_reason`: optional stable metadata-only code for an observed
+  fallback or failed upgrade (for example `websocket_upgrade_426`); never raw error text.
 - `purpose: "window-start"` marks requests sent by `POST /usage/start-window`;
   absent for client traffic.
 - Failed attempts add `status_code` and a sanitized `error` summary. Attempts of

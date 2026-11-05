@@ -22,6 +22,40 @@ func TestDesktopEventReportsSessionID(t *testing.T) {
 	}
 }
 
+func TestDesktopEventEffectiveMetadata(t *testing.T) {
+	for _, populated := range []bool{false, true} {
+		record := coreusage.Record{Model: "gpt-5", Alias: "coding", TraceID: "1234abcd"}
+		if populated {
+			record.ReasoningEffort = "high"
+			record.ParentSessionID = "codex:parent"
+			record.DownstreamTransport = "websocket"
+			record.UpstreamTransport = "websocket+http"
+			record.TransportFallbackReason = "websocket_upgrade_426"
+		}
+		data, err := json.Marshal(desktopEventFromRecord(record))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err = json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		for key, expected := range map[string]string{
+			"reasoning_effort": record.ReasoningEffort, "parent_session_id": record.ParentSessionID,
+			"downstream_transport": record.DownstreamTransport, "upstream_transport": record.UpstreamTransport,
+			"transport_fallback_reason": record.TransportFallbackReason,
+		} {
+			value, exists := fields[key]
+			if exists != populated || (exists && value != expected) {
+				t.Fatalf("%s = %v, present=%v, want %q present=%v", key, value, exists, expected, populated)
+			}
+		}
+		if fields["model"] != "gpt-5" || fields["alias"] != "coding" || fields["trace_id"] != "1234abcd" {
+			t.Fatalf("identity semantics changed: %s", data)
+		}
+	}
+}
+
 func TestDesktopEventReportsUserAgent(t *testing.T) {
 	event := desktopEventFromRecord(coreusage.Record{UserAgent: "codex_cli_rs/0.164.0"})
 	if event.UserAgent != "codex_cli_rs/0.164.0" {

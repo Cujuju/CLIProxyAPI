@@ -27,31 +27,36 @@ const (
 
 // desktopRequestEvent is one upstream attempt as the desktop activity view shows it.
 type desktopRequestEvent struct {
-	At          time.Time `json:"at"`
-	RequestID   string    `json:"request_id"`
-	UpstreamID  string    `json:"upstream_id,omitempty"`
-	SelectionID string    `json:"selection_id,omitempty"`
-	TraceID     string    `json:"trace_id,omitempty"`
-	Provider    string    `json:"provider"`
-	Model       string    `json:"model"`
-	Alias       string    `json:"alias,omitempty"`
-	AuthID      string    `json:"auth_id,omitempty"`
-	AuthIndex   string    `json:"auth_index,omitempty"`
-	Stream      bool      `json:"stream"`
-	Failed      bool      `json:"failed"`
-	StatusCode  int       `json:"status_code,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	LatencyMs   int64     `json:"latency_ms"`
-	TTFTMs      int64     `json:"ttft_ms,omitempty"`
-	InputTokens int64     `json:"input_tokens"`
-	Output      int64     `json:"output_tokens"`
+	At                      time.Time `json:"at"`
+	RequestID               string    `json:"request_id"`
+	UpstreamID              string    `json:"upstream_id,omitempty"`
+	SelectionID             string    `json:"selection_id,omitempty"`
+	TraceID                 string    `json:"trace_id,omitempty"`
+	Provider                string    `json:"provider"`
+	Model                   string    `json:"model"`
+	Alias                   string    `json:"alias,omitempty"`
+	ReasoningEffort         string    `json:"reasoning_effort,omitempty"`
+	DownstreamTransport     string    `json:"downstream_transport,omitempty"`
+	UpstreamTransport       string    `json:"upstream_transport,omitempty"`
+	TransportFallbackReason string    `json:"transport_fallback_reason,omitempty"`
+	AuthID                  string    `json:"auth_id,omitempty"`
+	AuthIndex               string    `json:"auth_index,omitempty"`
+	Stream                  bool      `json:"stream"`
+	Failed                  bool      `json:"failed"`
+	StatusCode              int       `json:"status_code,omitempty"`
+	Error                   string    `json:"error,omitempty"`
+	LatencyMs               int64     `json:"latency_ms"`
+	TTFTMs                  int64     `json:"ttft_ms,omitempty"`
+	InputTokens             int64     `json:"input_tokens"`
+	Output                  int64     `json:"output_tokens"`
 	// Cached counts cache reads; CacheWrite counts tokens written to the prompt cache.
 	Cached     int64 `json:"cached_tokens"`
 	CacheWrite int64 `json:"cache_creation_tokens"`
 	// Purpose is "window-start" for requests that start a usage window; empty for client traffic.
 	Purpose string `json:"purpose,omitempty"`
 	// SessionID is the client conversation (e.g. "claude:<session uuid>"); empty when the client sends none.
-	SessionID string `json:"session_id,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// UserAgent is the client's User-Agent header, naming the program that sent the request; empty when it sent none.
 	UserAgent string `json:"user_agent,omitempty"`
 }
@@ -104,6 +109,8 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 	event := desktopRequestEvent{
 		At: record.RequestedAt.UTC(), RequestID: record.RequestID, UpstreamID: record.UpstreamID, SelectionID: record.SelectionID, TraceID: record.TraceID, SessionID: record.SessionID,
 		UserAgent: record.UserAgent, Provider: record.Provider, Model: record.Model, Alias: record.Alias, AuthID: record.AuthID, AuthIndex: record.AuthIndex,
+		ReasoningEffort: record.ReasoningEffort, ParentSessionID: record.ParentSessionID,
+		DownstreamTransport: record.DownstreamTransport, UpstreamTransport: record.UpstreamTransport, TransportFallbackReason: record.TransportFallbackReason,
 		Stream: record.Stream, Failed: record.Failed, StatusCode: record.Fail.StatusCode,
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),
 		InputTokens: record.Detail.InputTokens, Output: record.Detail.OutputTokens, Cached: record.Detail.CachedTokens,
