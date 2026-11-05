@@ -55,5 +55,9 @@ func TestApplyManagerConfigReplacesSelectorWhenHoldChanges(t *testing.T) {
 	if after == before {
 		t.Fatal("enabling hold reused the disabled selector")
 	}
-	t.Cleanup(after.(*coreauth.SessionAffinitySelector).Stop)
+	disabledAgain := apply("0")
+	if disabledAgain == after {
+		t.Fatal("disabling hold reused the enabled selector")
+	}
+	t.Cleanup(disabledAgain.(*coreauth.SessionAffinitySelector).Stop)
 }
