@@ -107,6 +107,7 @@ func CaptureAuthenticatedRequestBody(c *gin.Context) {
 	if c == nil {
 		return
 	}
+	c.Set(archiveAuthenticatedKey, true)
 	value, exists := c.Get(authenticatedRequestBodyCapturerContextKey)
 	if !exists {
 		return

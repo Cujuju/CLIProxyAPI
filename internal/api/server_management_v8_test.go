@@ -45,7 +45,7 @@ func TestManagementV8RoutesShareAccessControl(t *testing.T) {
 			s := &Server{cfg: cfg, engine: gin.New(), mgmt: h}
 			s.managementRoutesEnabled.Store(tc.enabled)
 			s.registerManagementRoutes()
-			for _, route := range []string{"/v0/management/config", "/v8/management/config", "/v0/management/plugins", "/v8/management/plugins"} {
+			for _, route := range []string{"/v0/management/config", "/v8/management/config", "/v0/management/plugins", "/v8/management/plugins", "/v8/management/observability/captures"} {
 				req := httptest.NewRequest(http.MethodGet, route, nil)
 				req.RemoteAddr = "127.0.0.1:1234"
 				if tc.authorized {
@@ -88,6 +88,7 @@ func TestManagementV8IndependentContract(t *testing.T) {
 	for _, route := range []string{
 		"GET /v0/management/debug", "PUT /v0/management/request-retry", "GET /v0/management/auth-files",
 		"GET /v8/management/observability/logs", "GET /v8/management/observability/usage/queue",
+		"GET /v8/management/observability/captures", "PUT /v8/management/observability/captures/lease",
 		"GET /v8/management/credentials", "POST /v8/management/credentials",
 		"GET /v8/management/oauth/auth-url", "POST /v8/management/oauth/auth-url", "POST /v8/management/oauth/import", "POST /v8/management/oauth/callback",
 		"POST /v8/management/routing/cooldown/reset",
