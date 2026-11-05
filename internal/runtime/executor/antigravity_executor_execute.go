@@ -59,6 +59,8 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -137,7 +139,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return resp, err
 	}
 
-	httpResp, errDo := helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate").Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate"), httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		if errors.Is(errDo, context.Canceled) || errors.Is(errDo, context.DeadlineExceeded) {
@@ -276,6 +278,8 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -354,7 +358,7 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 		return resp, err
 	}
 
-	httpResp, errDo := helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate").Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate"), httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		if errors.Is(errDo, context.Canceled) || errors.Is(errDo, context.DeadlineExceeded) {

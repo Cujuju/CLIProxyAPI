@@ -167,7 +167,7 @@ func (e *AntigravityExecutor) refreshTokenSingleFlight(ctx context.Context, auth
 	httpReq.Header.Set("User-Agent", "Go-http-client/2.0")
 
 	httpClient := newAntigravityHTTPClient(ctx, e.cfg, auth, 0)
-	httpResp, errDo := helps.WithAntigravityHTTPClientTrace(httpClient, auth, "oauth_refresh").Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(helps.WithAntigravityHTTPClientTrace(httpClient, auth, "oauth_refresh"), httpReq)
 	if errDo != nil {
 		return nil, errDo
 	}

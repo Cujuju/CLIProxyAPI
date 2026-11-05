@@ -405,7 +405,7 @@ func (e *ClaudeExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Aut
 		return nil, err
 	}
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 // SupportsApplyPatch reports the actual executor contract, independent of its provider name.

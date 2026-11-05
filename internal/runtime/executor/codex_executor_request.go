@@ -108,7 +108,7 @@ func (e *CodexExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth
 		return nil, err
 	}
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 func (e *CodexExecutor) cacheHelper(ctx context.Context, from sdktranslator.Format, url string, req cliproxyexecutor.Request, rawJSON []byte, auth *cliproxyauth.Auth, headerSets ...http.Header) (*http.Request, []byte, error) {
@@ -278,7 +278,7 @@ func decodeCodexUpstreamResponse(resp *http.Response) error {
 func doCodexRequest(client *http.Client, req *http.Request, upstreamBody []byte, prepareHeaders func(*http.Request), responseReady func(*http.Response)) (*http.Response, error) {
 	alignCodexContentEncoding(req)
 	compressed := req.Header.Get("Content-Encoding") == "zstd"
-	resp, errDo := client.Do(req)
+	resp, errDo := helps.DoHTTP(client, req)
 	if errDo != nil {
 		return nil, errDo
 	}
@@ -302,7 +302,7 @@ func doCodexRequest(client *http.Client, req *http.Request, upstreamBody []byte,
 	plainReq.Header.Del("Content-Encoding")
 	prepareHeaders(plainReq)
 	alignCodexContentEncoding(plainReq)
-	resp, errDo = client.Do(plainReq)
+	resp, errDo = helps.DoHTTP(client, plainReq)
 	if errDo != nil {
 		return nil, errDo
 	}

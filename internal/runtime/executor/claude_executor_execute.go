@@ -39,6 +39,8 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	cchSigning := claudeCCHSigningEnabled(apiKey, claudeCCHUpstreamAnthropic, fp.ProfileClaudeCodeCLI, url)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 	if upstreamModel != baseModel {
 		reporter.SetUpstreamModel(upstreamModel)

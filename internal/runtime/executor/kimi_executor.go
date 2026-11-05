@@ -97,7 +97,7 @@ func (e *KimiExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth,
 		return nil, err
 	}
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 // Execute performs a non-streaming chat completion request to Kimi.
@@ -131,6 +131,8 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	token := kimiCreds(auth)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	to := sdktranslator.FromString("openai")
@@ -200,7 +202,7 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, err := httpClient.Do(httpReq)
+	httpResp, err := helps.DoHTTP(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
@@ -269,6 +271,8 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 	token := kimiCreds(auth)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	to := sdktranslator.FromString("openai")
@@ -342,7 +346,7 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, err := httpClient.Do(httpReq)
+	httpResp, err := helps.DoHTTP(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
@@ -437,6 +441,8 @@ func (e *KimiExecutor) executeResponses(ctx context.Context, auth *cliproxyauth.
 	token := kimiCreds(auth)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	body := bytes.Clone(req.Payload)
@@ -505,7 +511,7 @@ func (e *KimiExecutor) executeResponses(ctx context.Context, auth *cliproxyauth.
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -575,6 +581,8 @@ func (e *KimiExecutor) executeResponsesStream(ctx context.Context, auth *cliprox
 	token := kimiCreds(auth)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	body := bytes.Clone(req.Payload)
@@ -643,7 +651,7 @@ func (e *KimiExecutor) executeResponsesStream(ctx context.Context, auth *cliprox
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo

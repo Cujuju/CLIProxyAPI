@@ -477,6 +477,8 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	httpURL := strings.TrimSuffix(baseURL, "/") + "/responses"
@@ -570,6 +572,9 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
 		unlockStreamSession()
 		return nil, errDial
+	}
+	if conn != nil {
+		reporter.ObserveUpstreamTransport("websocket")
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 		unlockStreamSession()
@@ -1163,6 +1168,7 @@ func (e *XAIWebsocketsExecutor) dialXAIWebsocket(ctx context.Context, auth *clip
 		ctx = context.Background()
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
+	helps.ObserveWebsocketDial(ctx, resp, err)
 	if err != nil {
 		cliproxyexecutor.MarkUpstreamAttempt(ctx)
 	}

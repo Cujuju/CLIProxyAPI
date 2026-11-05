@@ -128,7 +128,7 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 	})
 
 	cliproxyexecutor.MarkUpstreamAttempt(ctx)
-	httpResp, errDo := helps.WithAntigravityHTTPClientTrace(httpClient, auth, "count_tokens").Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(helps.WithAntigravityHTTPClientTrace(httpClient, auth, "count_tokens"), httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return cliproxyexecutor.Response{}, errDo

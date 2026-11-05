@@ -50,6 +50,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 	// inherit the preceding response settings, just as they do upstream.
 	var metadataMu sync.Mutex
 	pending := []*codexWebsocketPrepared{initial}
+	attemptedCreates := map[*codexWebsocketPrepared]bool{initial: true}
 	// Serialize explicit creates against steering continuations. A response.created
 	// alone does not identify whether upstream created it automatically.
 	type codexSteerSubmission struct{ parent, eventID string }
@@ -273,6 +274,9 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				fail(fmt.Errorf("websocket credential is no longer enabled"))
 				return false
 			}
+			metadataMu.Lock()
+			attemptedCreates[prepared] = true
+			metadataMu.Unlock()
 			helps.RecordAPIWebsocketRequest(streamCtx, e.cfg, helps.UpstreamRequestLog{
 				URL: initial.wsURL, Method: "WEBSOCKET", Body: payload, Provider: e.Identifier(), AuthID: auth.ID,
 			})
@@ -411,6 +415,10 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 		}
 	}()
 	go func() {
+		reporter := initialReporter
+		firstResponse := true
+		responseActive := false
+		var terminalError error
 		defer close(out)
 		defer func() {
 			cancel()
@@ -418,6 +426,28 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 			// releasing the execution session. No goroutine outlives its socket.
 			e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "duplex_closed", nil)
 			<-writerDone
+			if terminalError == nil {
+				terminalError = ctx.Err()
+			}
+			if terminalError != nil {
+				if firstResponse || responseActive {
+					reporter.PublishFailure(ctx, terminalError)
+				}
+				// pending owns creates already handed to the socket, including partial
+				// writes. Unsent queued input is not a provider attempt.
+				for _, prepared := range pending {
+					if firstResponse && prepared == initial {
+						continue
+					}
+					if !attemptedCreates[prepared] {
+						continue
+					}
+					abandoned := helps.NewExecutorUsageReporter(ctx, e, req.Model, auth)
+					abandoned.ObserveUpstreamTransport("websocket")
+					abandoned.SetTranslatedReasoningEffort(prepared.clientBody, prepared.to.String())
+					abandoned.PublishFailure(ctx, terminalError)
+				}
+			}
 			sess.clearActive(conn, readCh)
 			unlock()
 		}()
@@ -429,9 +459,6 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				return false
 			}
 		}
-		reporter := initialReporter
-		firstResponse := true
-		responseActive := false
 		outputItems := make(map[int64][]byte)
 		var outputFallback [][]byte
 		// A business rejection followed by EOF with nothing outstanding stays terminal.
@@ -439,6 +466,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 		for {
 			kind, payload, errRead := readCodexWebsocketMessage(streamCtx, sess, conn, readCh)
 			if errRead != nil {
+				terminalError = errRead
 				select {
 				case errWrite := <-writeErrors:
 					errRead = errWrite
@@ -544,6 +572,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				automaticActive = !firstResponse && len(pending) == 0
 				if len(pending) > 0 {
 					current, pending = pending[0], pending[1:]
+					delete(attemptedCreates, current)
 				}
 				responseID = gjson.GetBytes(payload, "response.id").String()
 				// Retain response settings, not request history or authorization headers.
@@ -571,6 +600,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				wakeWriter()
 				if !firstResponse {
 					reporter = helps.NewExecutorUsageReporter(ctx, e, req.Model, auth)
+					reporter.ObserveUpstreamTransport("websocket")
 					reporter.SetTranslatedReasoningEffort(current.clientBody, current.to.String())
 					reporter.StartResponseTTFT()
 				}
@@ -655,7 +685,9 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				ambiguous := failedID == "" && ((len(pending) > 0 && responseActive) || len(unacknowledgedSteers) > 0)
 				if len(pending) > 0 && !currentFailure && !ambiguous {
 					eventPrepared, pending = pending[0], pending[1:]
+					delete(attemptedCreates, eventPrepared)
 					eventReporter = helps.NewExecutorUsageReporter(ctx, e, req.Model, auth)
+					eventReporter.ObserveUpstreamTransport("websocket")
 					eventReporter.SetTranslatedReasoningEffort(eventPrepared.clientBody, eventPrepared.to.String())
 				} else if !ambiguous {
 					responseActive = false

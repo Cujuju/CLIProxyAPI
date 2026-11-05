@@ -59,6 +59,8 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -137,7 +139,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		err = errReq
 		return nil, err
 	}
-	httpResp, errDo := helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate_stream").Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(helps.WithAntigravityHTTPClientTrace(httpClient, auth, "generate_stream"), httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		if errors.Is(errDo, context.Canceled) || errors.Is(errDo, context.DeadlineExceeded) {

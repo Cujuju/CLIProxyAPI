@@ -26,6 +26,7 @@ import (
 )
 
 type UsageReporter struct {
+	transport            transportObservation
 	requestID            string
 	traceID              string
 	selectionID          string
@@ -152,6 +153,13 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
 		reporter.accessTokenHash = authAccessTokenSHA256(auth)
+	}
+	reporter.transport.downstream = downstreamTransport(ctx)
+	if ctx != nil {
+		if prior, ok := ctx.Value(transportFallbackKey{}).(transportSnapshot); ok {
+			reporter.transport.upstream = prior.upstream
+			reporter.transport.reason = prior.reason
+		}
 	}
 	return reporter
 }
@@ -696,39 +704,43 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	if model == r.model {
 		responseModel = r.ResponseModel()
 	}
+	transport := r.transportSnapshot()
 	return usage.Record{
-		RequestID:            r.requestID,
-		UpstreamID:           r.upstreamResponseID(),
-		TraceID:              r.traceID,
-		SelectionID:          r.selectionID,
-		Provider:             r.provider,
-		BaseURL:              r.baseURL,
-		ExecutorType:         r.executorType,
-		Model:                model,
-		Alias:                r.alias,
-		Source:               r.source,
-		APIKey:               r.apiKey,
-		IsNativeKey:          r.isNativeKey,
-		AccessProvider:       r.accessProvider,
-		SessionID:            r.sessionID,
-		ParentSessionID:      r.parentSessionID,
-		AuthID:               r.authID,
-		AuthIndex:            r.authIndex,
-		AccessTokenSHA256:    r.accessTokenFingerprint(),
-		AuthType:             r.authType,
-		ReasoningEffort:      r.reasoning,
-		ServiceTier:          r.serviceTier,
-		EffectiveServiceTier: r.effectiveServiceTier,
-		ResponseServiceTier:  strings.TrimSpace(detail.ResponseServiceTier),
-		ResponseModel:        responseModel,
-		Generate:             usage.GenerateFlag(r.generate),
-		Stream:               r.stream,
-		RequestedAt:          r.requestedAt,
-		Latency:              r.latency(),
-		TTFT:                 r.ttftDuration(),
-		Failed:               failed,
-		Fail:                 fail,
-		Detail:               detail,
+		DownstreamTransport:     transport.downstream,
+		UpstreamTransport:       transport.upstream,
+		TransportFallbackReason: transport.reason,
+		RequestID:               r.requestID,
+		UpstreamID:              r.upstreamResponseID(),
+		TraceID:                 r.traceID,
+		SelectionID:             r.selectionID,
+		Provider:                r.provider,
+		BaseURL:                 r.baseURL,
+		ExecutorType:            r.executorType,
+		Model:                   model,
+		Alias:                   r.alias,
+		Source:                  r.source,
+		APIKey:                  r.apiKey,
+		IsNativeKey:             r.isNativeKey,
+		AccessProvider:          r.accessProvider,
+		SessionID:               r.sessionID,
+		ParentSessionID:         r.parentSessionID,
+		AuthID:                  r.authID,
+		AuthIndex:               r.authIndex,
+		AccessTokenSHA256:       r.accessTokenFingerprint(),
+		AuthType:                r.authType,
+		ReasoningEffort:         r.reasoning,
+		ServiceTier:             r.serviceTier,
+		EffectiveServiceTier:    r.effectiveServiceTier,
+		ResponseServiceTier:     strings.TrimSpace(detail.ResponseServiceTier),
+		ResponseModel:           responseModel,
+		Generate:                usage.GenerateFlag(r.generate),
+		Stream:                  r.stream,
+		RequestedAt:             r.requestedAt,
+		Latency:                 r.latency(),
+		TTFT:                    r.ttftDuration(),
+		Failed:                  failed,
+		Fail:                    fail,
+		Detail:                  detail,
 	}
 }
 

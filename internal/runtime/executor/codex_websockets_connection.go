@@ -40,6 +40,7 @@ func (e *CodexWebsocketsExecutor) dialCodexWebsocket(ctx context.Context, auth *
 		ctx = context.Background()
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
+	helps.ObserveWebsocketDial(ctx, resp, err)
 	if err != nil {
 		cliproxyexecutor.MarkUpstreamAttempt(ctx)
 	}

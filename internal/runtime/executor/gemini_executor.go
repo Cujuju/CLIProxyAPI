@@ -108,7 +108,7 @@ func (e *GeminiExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Aut
 		return nil, err
 	}
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 // Execute performs a non-streaming request to the Gemini API.
@@ -137,6 +137,8 @@ func (e *GeminiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	apiKey := geminiAPIKey(auth)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	// Official Gemini API via API key.
@@ -215,7 +217,7 @@ func (e *GeminiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, err := httpClient.Do(httpReq)
+	httpResp, err := helps.DoHTTP(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
@@ -278,6 +280,8 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	apiKey := geminiAPIKey(auth)
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -348,7 +352,7 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, err := httpClient.Do(httpReq)
+	httpResp, err := helps.DoHTTP(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
@@ -547,6 +551,7 @@ func (e *GeminiExecutor) executeInteractions(ctx context.Context, auth *cliproxy
 	targetName := thinking.ParseSuffix(req.Model).ModelName
 	apiKey := geminiAPIKey(auth)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, targetName, auth)
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	isCompat := helps.APIKeyModelIsCompat(req)
@@ -597,7 +602,7 @@ func (e *GeminiExecutor) executeInteractions(ctx context.Context, auth *cliproxy
 	})
 
 	httpClient := reporter.TrackHTTPClient(helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0))
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -638,6 +643,7 @@ func (e *GeminiExecutor) executeInteractionsStream(ctx context.Context, auth *cl
 	targetName := thinking.ParseSuffix(req.Model).ModelName
 	apiKey := geminiAPIKey(auth)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, targetName, auth)
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	isCompat := helps.APIKeyModelIsCompat(req)
@@ -688,7 +694,7 @@ func (e *GeminiExecutor) executeInteractionsStream(ctx context.Context, auth *cl
 	})
 
 	httpClient := reporter.TrackHTTPClient(helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0))
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo
@@ -873,7 +879,7 @@ func (e *GeminiExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	cliproxyexecutor.MarkUpstreamAttempt(ctx)
-	resp, err := httpClient.Do(httpReq)
+	resp, err := helps.DoHTTP(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return cliproxyexecutor.Response{}, err

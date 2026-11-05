@@ -41,7 +41,14 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
-	defer reporter.TrackFailure(ctx, &err)
+
+	ctx = reporter.WithTransportContext(ctx)
+	usingHTTPFallback := false
+	defer func() {
+		if !usingHTTPFallback {
+			reporter.TrackFailure(ctx, &err)
+		}
+	}()
 
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
@@ -171,7 +178,8 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 		if respHS != nil && respHS.StatusCode == http.StatusUpgradeRequired {
 			if opts.ExecutionLifecycle == nil && !cliproxyexecutor.DownstreamWebsocket(ctx) {
-				return e.CodexExecutor.Execute(ctx, auth, req, opts)
+				usingHTTPFallback = true
+				return e.CodexExecutor.Execute(reporter.TransportFallbackContext(ctx), auth, req, opts)
 			}
 			if cliproxyexecutor.UpstreamAttempted(dialCtx) {
 				cliproxyexecutor.MarkUpstreamAttempt(ctx)
@@ -186,6 +194,9 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
 		return resp, errDial
+	}
+	if conn != nil {
+		reporter.ObserveUpstreamTransport("websocket")
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 		unlockSession()

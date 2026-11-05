@@ -80,7 +80,7 @@ func (e *MetaExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth,
 		return nil, err
 	}
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, enriched, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 // Refresh mints an API key from a DCA token if needed.

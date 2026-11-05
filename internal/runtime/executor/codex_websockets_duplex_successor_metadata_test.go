@@ -21,6 +21,7 @@ import (
 func TestCodexDuplexAutomaticSuccessorMetadata(t *testing.T) {
 	for _, scenario := range []string{"completed", "incomplete", "early_tool_result", "failed_steering", "multiple_steers", "create_before_steer"} {
 		t.Run(scenario, func(t *testing.T) {
+			transportSink := newTransportSink(t)
 			queued := make(chan struct{})
 			beforeSteer := make(chan struct{})
 			done := make(chan struct{})
@@ -184,6 +185,22 @@ func TestCodexDuplexAutomaticSuccessorMetadata(t *testing.T) {
 			wantAuto := scenario != "early_tool_result" && scenario != "failed_steering"
 			if !explicit || automatic != wantAuto {
 				t.Fatalf("automatic=%t want=%t explicit=%t", automatic, wantAuto, explicit)
+			}
+			records := transportSink.drain(t)
+			wantRecords := 3
+			if !wantAuto {
+				wantRecords = 2
+			}
+			if scenario == "create_before_steer" {
+				wantRecords = 4
+			}
+			if len(records) != wantRecords {
+				t.Fatalf("transport records = %d, want %d", len(records), wantRecords)
+			}
+			for _, record := range records {
+				if record.DownstreamTransport != "websocket" || record.UpstreamTransport != "websocket" || record.TransportFallbackReason != "" || record.Failed {
+					t.Fatalf("successor transport = %+v", record)
+				}
 			}
 			select {
 			case <-done:

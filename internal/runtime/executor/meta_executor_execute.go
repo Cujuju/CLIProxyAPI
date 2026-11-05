@@ -113,6 +113,8 @@ func (e *MetaExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, enriched)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 	reporter.SetTranslatedReasoningEffort(prepared.body, prepared.to.String())
 
@@ -131,7 +133,7 @@ func (e *MetaExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, enriched, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo

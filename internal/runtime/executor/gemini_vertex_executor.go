@@ -232,7 +232,7 @@ func (e *GeminiVertexExecutor) HttpRequest(ctx context.Context, auth *cliproxyau
 		return nil, err
 	}
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 // Execute performs a non-streaming request to the Vertex AI API.
@@ -380,6 +380,7 @@ func (e *GeminiVertexExecutor) executeOpenAPI(ctx context.Context, auth *cliprox
 	if errCreds != nil {
 		baseModel := thinking.ParseSuffix(req.Model).ModelName
 		reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+		ctx = reporter.WithTransportContext(ctx)
 		reporter.TrackFailure(ctx, &errCreds)
 		return resp, errCreds
 	}
@@ -392,6 +393,7 @@ func (e *GeminiVertexExecutor) executeOpenAPIStream(ctx context.Context, auth *c
 	if errCreds != nil {
 		baseModel := thinking.ParseSuffix(req.Model).ModelName
 		reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+		ctx = reporter.WithTransportContext(ctx)
 		reporter.TrackFailure(ctx, &errCreds)
 		return nil, errCreds
 	}
@@ -412,6 +414,8 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	var body []byte
@@ -516,7 +520,7 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -581,6 +585,8 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -669,7 +675,7 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -723,6 +729,8 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -807,7 +815,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo
@@ -947,6 +955,8 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	from := opts.SourceFormat
@@ -1028,7 +1038,7 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo
@@ -1237,7 +1247,7 @@ func (e *GeminiVertexExecutor) countTokensWithServiceAccount(ctx context.Context
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	cliproxyexecutor.MarkUpstreamAttempt(ctx)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return cliproxyexecutor.Response{}, errDo
@@ -1336,7 +1346,7 @@ func (e *GeminiVertexExecutor) countTokensWithAPIKey(ctx context.Context, auth *
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	cliproxyexecutor.MarkUpstreamAttempt(ctx)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return cliproxyexecutor.Response{}, errDo
@@ -1551,6 +1561,7 @@ func vertexInteractionsURL(baseURL, projectID string, isStream bool) string {
 func (e *GeminiVertexExecutor) executeInteractions(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	targetName := thinking.ParseSuffix(req.Model).ModelName
 	reporter := helps.NewExecutorUsageReporter(ctx, e, targetName, auth)
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	isCompat := helps.APIKeyModelIsCompat(req)
@@ -1641,7 +1652,7 @@ func (e *GeminiVertexExecutor) executeInteractions(ctx context.Context, auth *cl
 	})
 
 	httpClient := reporter.TrackHTTPClient(helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0))
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -1680,6 +1691,7 @@ func (e *GeminiVertexExecutor) executeInteractions(ctx context.Context, auth *cl
 func (e *GeminiVertexExecutor) executeInteractionsStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	targetName := thinking.ParseSuffix(req.Model).ModelName
 	reporter := helps.NewExecutorUsageReporter(ctx, e, targetName, auth)
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	isCompat := helps.APIKeyModelIsCompat(req)
@@ -1771,7 +1783,7 @@ func (e *GeminiVertexExecutor) executeInteractionsStream(ctx context.Context, au
 	})
 
 	httpClient := reporter.TrackHTTPClient(helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0))
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo

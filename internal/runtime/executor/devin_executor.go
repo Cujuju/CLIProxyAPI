@@ -136,7 +136,7 @@ func (e *DevinExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth
 		return nil, err
 	}
 	httpClient := helps.NewDevinHTTPClient(ctx, e.cfg, auth, 0)
-	return httpClient.Do(httpReq)
+	return helps.DoHTTP(httpClient, httpReq)
 }
 
 // Refresh updates Devin user status, plan, and quota signals.
@@ -240,6 +240,8 @@ func (e *DevinExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	targetModel := thinking.ParseSuffix(req.Model).ModelName
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, targetModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	httpReq, chatModelUID, logBody, errPrep := e.prepareDevinHTTPRequest(ctx, auth, req, opts)
@@ -264,7 +266,7 @@ func (e *DevinExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	})
 
 	httpClient := reporter.TrackHTTPClient(helps.NewDevinHTTPClient(ctx, e.cfg, auth, 0))
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -333,6 +335,8 @@ func (e *DevinExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	targetModel := thinking.ParseSuffix(req.Model).ModelName
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, targetModel, auth)
+
+	ctx = reporter.WithTransportContext(ctx)
 	defer reporter.TrackFailure(ctx, &err)
 
 	httpReq, chatModelUID, logBody, errPrep := e.prepareDevinHTTPRequest(ctx, auth, req, opts)
@@ -357,7 +361,7 @@ func (e *DevinExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	})
 
 	httpClient := reporter.TrackHTTPClient(helps.NewDevinHTTPClient(ctx, e.cfg, auth, 0))
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, errDo := helps.DoHTTP(httpClient, httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo
