@@ -840,8 +840,9 @@ func TestNewExecutorUsageReporterIncludesExecutorType(t *testing.T) {
 }
 
 func TestUsageReporterBuildRecordIncludesReasoningEffort(t *testing.T) {
-	ctx := usage.WithReasoningEffort(context.Background(), "medium")
+	ctx := usage.WithReasoningEffort(context.Background(), "xhigh")
 	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
+	reporter.SetTranslatedRequestMetadata([]byte(`{"reasoning_effort":"medium"}`), "openai")
 
 	record := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false)
 	if record.ReasoningEffort != "medium" {
@@ -925,6 +926,24 @@ func TestUsageReporterSetTranslatedReasoningEffortPreservesClientServiceTier(t *
 	}
 	if record.ResponseServiceTier != "default" {
 		t.Fatalf("response service tier = %q, want %q", record.ResponseServiceTier, "default")
+	}
+}
+
+func TestUsageReporterEffectiveEffortUnknownBeforeTranslation(t *testing.T) {
+	ctx := usage.WithReasoningEffort(context.Background(), "xhigh")
+	reporter := NewUsageReporter(ctx, "codex", "gpt-5", nil)
+	for _, failed := range []bool{false, true} {
+		if got := reporter.buildRecord(usage.Detail{}, failed).ReasoningEffort; got != "" {
+			t.Fatalf("before translation, failed=%v: effort=%q, want unknown", failed, got)
+		}
+	}
+	reporter.SetTranslatedRequestMetadata([]byte(`{"reasoning":{"effort":"low"}}`), "codex")
+	if got := reporter.buildRecord(usage.Detail{}, true).ReasoningEffort; got != "low" {
+		t.Fatalf("after translation: effort=%q, want low even on upstream failure", got)
+	}
+	reporter.SetTranslatedRequestMetadata([]byte(`{"model":"gpt-5"}`), "codex")
+	if got := reporter.buildRecord(usage.Detail{}, false).ReasoningEffort; got != "" {
+		t.Fatalf("after effort removal: effort=%q, want unknown", got)
 	}
 }
 

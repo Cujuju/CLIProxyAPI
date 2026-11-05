@@ -69,7 +69,6 @@ func (m *Manager) reportHomeUnauthorized(ctx context.Context, auth *Auth, provid
 		AccessTokenSHA256: accessTokenSHA256,
 		AuthType:          auth.AuthKind(),
 		Source:            auth.AuthSourceKind(),
-		ReasoningEffort:   coreusage.ReasoningEffortFromContext(ctx),
 		ServiceTier:       coreusage.ServiceTierFromContext(ctx),
 		Generate:          coreusage.GenerateFlag(false),
 		RequestedAt:       time.Now(),

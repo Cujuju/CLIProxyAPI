@@ -144,7 +144,6 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		parentSessionID: parentSessionID,
 		source:          resolveUsageSource(auth, apiKey),
 		authType:        resolveUsageAuthType(auth),
-		reasoning:       usage.ReasoningEffortFromContext(ctx),
 		serviceTier:     usage.ServiceTierFromContext(ctx),
 		generate:        usage.GenerateFromContext(ctx),
 		stream:          usage.StreamFromContext(ctx),
