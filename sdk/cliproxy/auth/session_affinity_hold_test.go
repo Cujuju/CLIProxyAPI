@@ -159,3 +159,34 @@ func TestOnResult_HoldKeepsBindingThroughA429(t *testing.T) {
 		}
 	}
 }
+
+func TestOnResult_TracksServedSessionsOnlyWhenHoldEnabled(t *testing.T) {
+	for _, hold := range []time.Duration{0, holdTestWindow} {
+		t.Run(hold.String(), func(t *testing.T) {
+			selector := newHoldSelector(hold)
+			t.Cleanup(selector.cache.Stop)
+			body := holdTestBody("1h")
+			key := holdTestKey(t, body)
+			selector.cache.Set(key, "bound")
+			for range 3 {
+				selector.OnResult(Result{
+					AuthID: "bound", Provider: "claude", Model: exhaustionTestModel, Success: true,
+					Options: cliproxyexecutor.Options{Headers: holdTestHeaders, OriginalRequest: body, Metadata: map[string]any{
+						cliproxyexecutor.SessionAffinityProviderMetadataKey: affinityProvider,
+						cliproxyexecutor.SessionAffinityModelMetadataKey:    exhaustionTestModel,
+					}},
+				})
+			}
+			if authID, _, bound := selector.cache.peek(key); !bound || authID != "bound" {
+				t.Fatalf("successful requests lost their binding: %q, bound=%v", authID, bound)
+			}
+			served := selector.served.lastServed(key)
+			if tracked := !served.IsZero(); tracked != (hold > 0) {
+				t.Fatalf("hold %v: served timestamp = %v", hold, served)
+			}
+			if hold == 0 && len(selector.served.at) != 0 {
+				t.Fatalf("hold disabled: retained %d served sessions", len(selector.served.at))
+			}
+		})
+	}
+}

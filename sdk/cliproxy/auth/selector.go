@@ -1790,7 +1790,9 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 		if fallbackKey != "" {
 			s.cache.Touch(fallbackKey, res.AuthID)
 		}
-		s.served.record(cacheKey, time.Now(), s.cache.ttl)
+		if s.hold > 0 {
+			s.served.record(cacheKey, time.Now(), s.cache.ttl)
+		}
 		return
 	}
 	if s.hold > 0 && statusCodeFromResult(res.Error) == http.StatusTooManyRequests {
