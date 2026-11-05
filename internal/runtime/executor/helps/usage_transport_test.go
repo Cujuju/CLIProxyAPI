@@ -49,8 +49,15 @@ func TestTransportHTTPIsPayloadNeutralAndFallbackIsIsolated(t *testing.T) {
 	ws := NewUsageReporter(root, "codex", "test", nil)
 	ctx := ws.WithTransportContext(root)
 	ObserveWebsocketDial(ctx, &http.Response{StatusCode: 426}, errors.New("sensitive upstream detail"))
-	fallback := NewUsageReporter(ws.TransportFallbackContext(ctx), "codex", "test", nil)
-	fallbackCtx := fallback.WithTransportContext(ws.TransportFallbackContext(ctx))
+	handoffCtx := ws.TransportFallbackContext(ctx)
+	if TransportFallbackClaimed(handoffCtx) {
+		t.Fatal("early fallback failure would lose its owner")
+	}
+	fallback := NewUsageReporter(handoffCtx, "codex", "test", nil)
+	if !TransportFallbackClaimed(handoffCtx) {
+		t.Fatal("constructed reporter did not claim the attempt")
+	}
+	fallbackCtx := fallback.WithTransportContext(handoffCtx)
 	request, _ := http.NewRequestWithContext(fallbackCtx, "POST", "https://upstream.invalid/responses", strings.NewReader(`{"input":"keep unchanged"}`))
 	request.Header.Set("X-Test", "preserved")
 	client := &http.Client{Transport: transportTestRoundTripper(func(r *http.Request) (*http.Response, error) {
@@ -71,6 +78,10 @@ func TestTransportHTTPIsPayloadNeutralAndFallbackIsIsolated(t *testing.T) {
 	}
 	if ws.transportSnapshot().upstream != "websocket" {
 		t.Fatal("fallback mutated the failed upgrade reporter")
+	}
+	second := NewUsageReporter(handoffCtx, "codex", "test", nil)
+	if second.transportSnapshot().upstream != "" || second.transportSnapshot().reason != "" {
+		t.Fatal("fallback snapshot claimed twice")
 	}
 	// An ordinary retry/new turn on the same original request cannot inherit observations.
 	next := NewUsageReporter(ctx, "codex", "test", nil)

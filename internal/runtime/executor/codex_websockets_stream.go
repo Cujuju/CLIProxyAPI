@@ -33,9 +33,9 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)
-	usingHTTPFallback := false
+	var fallbackCtx context.Context
 	defer func() {
-		if !usingHTTPFallback {
+		if !helps.TransportFallbackClaimed(fallbackCtx) {
 			reporter.TrackFailure(ctx, &err)
 		}
 	}()
@@ -143,8 +143,8 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		if respHS != nil && respHS.StatusCode == http.StatusUpgradeRequired {
 			unlockStreamSession()
 			if opts.ExecutionLifecycle == nil && !cliproxyexecutor.DownstreamWebsocket(ctx) {
-				usingHTTPFallback = true
-				return e.CodexExecutor.ExecuteStream(reporter.TransportFallbackContext(ctx), auth, req, opts)
+				fallbackCtx = reporter.TransportFallbackContext(ctx)
+				return e.CodexExecutor.ExecuteStream(fallbackCtx, auth, req, opts)
 			}
 			if cliproxyexecutor.UpstreamAttempted(dialCtx) {
 				cliproxyexecutor.MarkUpstreamAttempt(ctx)
@@ -616,11 +616,6 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		var terminateErr error
 
 		defer close(out)
-		defer func() {
-			if ctx.Err() != nil {
-				reporter.PublishFailure(ctx, ctx.Err())
-			}
-		}()
 		defer func() {
 			if sess != nil {
 				sess.clearActive(conn, readCh)

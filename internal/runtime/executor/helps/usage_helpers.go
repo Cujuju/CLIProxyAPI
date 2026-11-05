@@ -155,9 +155,9 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 	}
 	reporter.transport.downstream = downstreamTransport(ctx)
 	if ctx != nil {
-		if prior, ok := ctx.Value(transportFallbackKey{}).(transportSnapshot); ok {
-			reporter.transport.upstream = prior.upstream
-			reporter.transport.reason = prior.reason
+		if handoff, ok := ctx.Value(transportFallbackKey{}).(*transportFallback); ok && handoff != nil && handoff.claimed.CompareAndSwap(false, true) {
+			reporter.transport.upstream = handoff.snapshot.upstream
+			reporter.transport.reason = handoff.snapshot.reason
 		}
 	}
 	return reporter

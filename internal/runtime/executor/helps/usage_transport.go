@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -20,6 +21,10 @@ type transportObservation struct {
 type transportReporterKey struct{}
 type transportFallbackKey struct{}
 type transportSnapshot struct{ downstream, upstream, reason string }
+type transportFallback struct {
+	snapshot transportSnapshot
+	claimed  atomic.Bool
+}
 
 func downstreamTransport(ctx context.Context) string {
 	if core.DownstreamWebsocket(ctx) {
@@ -48,7 +53,20 @@ func (r *UsageReporter) WithTransportContext(ctx context.Context) context.Contex
 // TransportFallbackContext transfers an immutable failed-upgrade observation to
 // the HTTP execution that owns the final record. Ordinary retries never inherit it.
 func (r *UsageReporter) TransportFallbackContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, transportFallbackKey{}, r.transportSnapshot())
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, transportFallbackKey{}, &transportFallback{snapshot: r.transportSnapshot()})
+}
+
+// TransportFallbackClaimed reports whether a fallback executor has constructed
+// the reporter that now owns this attempt, including failures before any HTTP call.
+func TransportFallbackClaimed(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	handoff, _ := ctx.Value(transportFallbackKey{}).(*transportFallback)
+	return handoff != nil && handoff.claimed.Load()
 }
 
 func (r *UsageReporter) transportSnapshot() transportSnapshot {

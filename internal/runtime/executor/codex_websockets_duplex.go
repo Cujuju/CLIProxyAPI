@@ -419,6 +419,10 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 		firstResponse := true
 		responseActive := false
 		var terminalError error
+		finish := func(err error) {
+			terminalError = err
+			reporter.PublishFailure(ctx, err)
+		}
 		defer close(out)
 		defer func() {
 			cancel()
@@ -426,10 +430,8 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 			// releasing the execution session. No goroutine outlives its socket.
 			e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "duplex_closed", nil)
 			<-writerDone
-			if terminalError == nil {
-				terminalError = ctx.Err()
-			}
-			if terminalError != nil {
+			// Match HTTP accounting: a client cancellation is not an upstream failure.
+			if ctx.Err() == nil && terminalError != nil {
 				if firstResponse || responseActive {
 					reporter.PublishFailure(ctx, terminalError)
 				}
@@ -531,7 +533,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 							connectionErr = turnErr
 						}
 					}
-					reporter.PublishFailure(ctx, connectionErr)
+					finish(connectionErr)
 					send(cliproxyexecutor.StreamChunk{Err: connectionErr})
 				}
 				return
@@ -556,7 +558,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					if settings == nil {
 						metadataMu.Unlock()
 						connectionErr := &codexDuplexConnectionError{cause: fmt.Errorf("automatic successor has no retained parent settings")}
-						reporter.PublishFailure(ctx, connectionErr)
+						finish(connectionErr)
 						send(cliproxyexecutor.StreamChunk{Err: connectionErr})
 						return
 					}
@@ -664,7 +666,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					// Account health is independent of which queued request failed.
 					// The conductor records the original classification without replaying
 					// this already-started stream on another credential.
-					reporter.PublishFailure(ctx, credentialErr)
+					finish(credentialErr)
 					if send(cliproxyexecutor.StreamChunk{Payload: payload}) {
 						send(cliproxyexecutor.StreamChunk{Err: credentialErr})
 					}
@@ -700,7 +702,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					// either request. Preserve the event and fail the socket without
 					// guessing a scope, replaying input, or cooling the credential.
 					connectionErr := &codexDuplexConnectionError{cause: fmt.Errorf("cannot associate websocket failure with a response or pending create")}
-					reporter.PublishFailure(ctx, connectionErr)
+					finish(connectionErr)
 					if send(cliproxyexecutor.StreamChunk{Payload: payload}) {
 						send(cliproxyexecutor.StreamChunk{Err: connectionErr})
 					}
@@ -721,6 +723,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				replayErr = clearCodexReasoningReplayOnInvalidSignature(ctx, eventPrepared.replayScope, streamErr.StatusCode(), body)
 			}
 			if replayErr != nil {
+				terminalError = replayErr
 				helps.RecordAPIWebsocketError(ctx, e.cfg, "replay_clear_error", replayErr)
 				eventReporter.PublishFailure(ctx, replayErr)
 				send(cliproxyexecutor.StreamChunk{Err: replayErr})
@@ -732,6 +735,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				helps.RecordAPIWebsocketError(ctx, e.cfg, "upstream_error", terminalErr)
 				eventReporter.PublishFailure(ctx, terminalErr)
 				if firstResponse {
+					terminalError = terminalErr
 					send(cliproxyexecutor.StreamChunk{Err: terminalErr})
 					return
 				}

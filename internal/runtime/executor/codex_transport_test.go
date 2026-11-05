@@ -208,11 +208,12 @@ func TestCodexTransportReusedSessionAndCancellation(t *testing.T) {
 		cancel()
 	}
 	records := sink.drain(t)
-	if len(records) != 3 || handshakes.Load() != 1 {
+	// Client cancellation follows the HTTP policy: no extra failure or success is counted.
+	if len(records) != 2 || handshakes.Load() != 1 {
 		t.Fatalf("records=%d handshakes=%d", len(records), handshakes.Load())
 	}
 	for i, r := range records {
-		if r.UpstreamTransport != "websocket" || r.DownstreamTransport != "http" || r.TransportFallbackReason != "" || r.Failed != (i == 2) {
+		if r.UpstreamTransport != "websocket" || r.DownstreamTransport != "http" || r.TransportFallbackReason != "" || r.Failed {
 			t.Fatalf("attempt %d = %+v", i, r)
 		}
 		if i > 0 && records[i-1].RequestID == r.RequestID {
@@ -222,8 +223,10 @@ func TestCodexTransportReusedSessionAndCancellation(t *testing.T) {
 }
 
 func TestCodexTransportDuplexPartialSuccessor(t *testing.T) {
-	for _, pendingDisconnect := range []bool{false, true} {
-		t.Run(fmt.Sprintf("pending_disconnect_%t", pendingDisconnect), func(t *testing.T) {
+	for _, scenario := range []string{"automatic_cancel", "pending_disconnect", "pending_credential_failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			pendingDisconnect := scenario != "automatic_cancel"
+			credentialFailure := scenario == "pending_credential_failure"
 			sink := newTransportSink(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
@@ -239,6 +242,11 @@ func TestCodexTransportDuplexPartialSuccessor(t *testing.T) {
 					if _, _, err = conn.ReadMessage(); err != nil {
 						return
 					}
+				}
+				if credentialFailure {
+					_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","status":429,"response_id":"first","error":{"type":"usage_limit_reached","message":"quota"}}`))
+					_, _, _ = conn.ReadMessage()
+					return
 				}
 				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"first","output":[]}}`))
 				if pendingDisconnect {
@@ -275,12 +283,19 @@ func TestCodexTransportDuplexPartialSuccessor(t *testing.T) {
 				}
 			}
 			records := sink.drain(t)
-			if len(records) != 2 {
+			wantRecords := 2
+			if !pendingDisconnect {
+				wantRecords = 1
+			}
+			if len(records) != wantRecords {
 				t.Fatalf("records=%d, want first and partial successor: %+v", len(records), records)
 			}
 			for i, r := range records {
-				if r.DownstreamTransport != "websocket" || r.UpstreamTransport != "websocket" || r.TransportFallbackReason != "" || r.Failed != (i == 1) {
+				if r.DownstreamTransport != "websocket" || r.UpstreamTransport != "websocket" || r.TransportFallbackReason != "" || r.Failed != (credentialFailure || i == 1) {
 					t.Fatalf("attempt %d=%+v", i, r)
+				}
+				if credentialFailure && r.Fail.StatusCode != 429 {
+					t.Fatalf("lost failure classification: %+v", r.Fail)
 				}
 			}
 		})
