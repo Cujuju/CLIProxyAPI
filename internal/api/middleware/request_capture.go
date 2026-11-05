@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -95,7 +94,16 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		generation, enabled := spool.Begin()
+		begin, finish := spool.Begin, spool.Finish
+		if isResponsesWebsocketUpgrade(c.Request) {
+			if ws, ok := spool.(interface {
+				BeginWebsocket() (uint64, bool)
+				FinishWebsocket(uint64, logging.CaptureRecord)
+			}); ok {
+				begin, finish = ws.BeginWebsocket, ws.FinishWebsocket
+			}
+		}
+		generation, enabled := begin()
 		if !enabled {
 			c.Next()
 			return
@@ -105,6 +113,22 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 		r.Path = boundedCaptureField(r.Path, 2048)
 		r.RequestType = boundedCaptureField(r.RequestType, 256)
 		r.RequestEncoding = boundedCaptureField(r.RequestEncoding, 64)
+		var messages *logging.CaptureMessages
+		updateBase := r
+		if isResponsesWebsocketUpgrade(c.Request) {
+			messages = logging.NewCaptureMessages(func() {
+				if updates, ok := spool.(interface {
+					Update(uint64, logging.CaptureRecord)
+				}); ok {
+					snapshot := updateBase
+					snapshot.Status = 101
+					snapshot.State = "pending"
+					snapshot.Messages = messages
+					updates.Update(generation, snapshot)
+				}
+			})
+			c.Set(logging.CaptureMessagesContextKey, messages)
+		}
 		var request, response boundedCapture
 		var reader *captureReader
 		if c.Request.Body != nil {
@@ -124,11 +148,17 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 				r.State = "missing"
 				r.Reason = "not-authenticated"
 			} else if writer.hijacked || strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
-				r.State = "partial"
-				r.Reason = "websocket-frames-not-captured"
+				if messages != nil && writer.hijacked {
+					messages.Close(false)
+					r.Messages = messages
+					r.Status = 101
+				} else {
+					r.State = "partial"
+					r.Reason = "websocket-upgrade-not-captured"
+				}
 			} else {
-				r.Request = strings.ToValidUTF8(request.String(), "�")
-				r.Response = strings.ToValidUTF8(response.String(), "�")
+				r.RawRequest = request.Bytes()
+				r.RawResponse = response.Bytes()
 				if request.truncated || response.truncated {
 					r.State = "partial"
 					r.Reason = "byte-limit"
@@ -136,10 +166,6 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 				if reader != nil && !reader.eof && (c.Request.ContentLength < 0 || reader.read < c.Request.ContentLength) {
 					r.State = "partial"
 					r.Reason = "request-not-fully-consumed"
-				}
-				if !utf8.Valid(request.Bytes()) || !utf8.Valid(response.Bytes()) {
-					r.State = "partial"
-					r.Reason = "binary-or-incomplete-utf8"
 				}
 				if c.Request.Context().Err() != nil {
 					r.State = "partial"
@@ -149,16 +175,12 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 					r.State = "partial"
 					r.Reason = "response-write-failed"
 				}
-				if r.RequestEncoding != "" || r.ResponseEncoding != "" {
-					r.State = "partial"
-					r.Reason = "encoded-wire-body"
-				}
 			}
 			if panicValue != nil {
 				r.State = "partial"
 				r.Reason = "handler-panic"
 			}
-			spool.Finish(generation, r)
+			finish(generation, r)
 			if panicValue != nil {
 				panic(panicValue)
 			}

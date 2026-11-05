@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -120,6 +121,7 @@ func websocketClosePayloadForUpstreamError(err error) (bool, []byte) {
 }
 
 type responsesWebsocketWriter struct {
+	capture *requestlogging.CaptureMessages
 	conn    *websocket.Conn
 	writeMu sync.Mutex
 	closing atomic.Bool
@@ -191,6 +193,11 @@ func (w *responsesWebsocketWriter) closeWithPayload(payload []byte) (bool, error
 	defer w.writeMu.Unlock()
 
 	errWrite := w.conn.WriteMessage(websocket.TextMessage, payload)
+	if errWrite == nil {
+		w.capture.Append("response", websocket.TextMessage, payload)
+	} else {
+		w.capture.WriteError()
+	}
 	errClose := w.conn.Close()
 	if errWrite != nil {
 		return false, errWrite
@@ -353,6 +360,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		return
 	}
 	writer := newResponsesWebsocketWriter(conn)
+	writer.capture = requestlogging.CaptureMessagesFromGin(c)
 	passthroughSessionID := uuid.NewString()
 	socketCtx, cancelSocket := context.WithCancelCause(c.Request.Context())
 	defer cancelSocket(nil)
@@ -438,6 +446,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		}
 		// Finish control-frame diagnostics before snapshotting the timeline.
 		<-inputDone
+		writer.capture.Close(wsTerminateErr != nil && !websocket.IsCloseError(wsTerminateErr, websocket.CloseNormalClosure, websocket.CloseGoingAway))
 		wsTimelineLog.SetContext(c)
 	}()
 

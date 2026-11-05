@@ -8,7 +8,7 @@ import (
 )
 
 func testCaptureSpool() *CaptureSpool {
-	return &CaptureSpool{epoch: "test-epoch", queue: make(chan captureEnvelope, 8), active: make(chan struct{}, 16)}
+	return &CaptureSpool{epoch: "test-epoch", queue: make(chan captureEnvelope, 8), active: make(chan struct{}, 16), wsActive: make(chan struct{}, 16)}
 }
 
 func TestCaptureSpoolLeaseOverflowReplayAndDisable(t *testing.T) {
@@ -44,7 +44,9 @@ func TestCaptureSpoolLeaseOverflowReplayAndDisable(t *testing.T) {
 	s.Lease(false)
 	s.Finish(g, CaptureRecord{ID: "stale"})
 	s.Lease(true)
-	s.store(<-s.queue)
+	if len(s.queue) > 0 {
+		s.store(<-s.queue)
+	}
 	if len(s.Page(0).Records) != 0 {
 		t.Fatal("old generation retained after disable")
 	}

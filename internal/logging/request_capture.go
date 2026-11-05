@@ -8,24 +8,31 @@ import (
 )
 
 // CaptureRecord v1 identifies an inbound exchange, independently of usage executions.
-// Bodies are downstream wire text; WebSocket frame capture is deliberately unsupported.
+// HTTP bodies are decoded in the worker; frames are bounded downstream messages.
 type CaptureRecord struct {
-	ID               string `json:"id"`
-	TraceID          string `json:"traceId"`
-	Epoch            string `json:"epoch"`
-	Sequence         uint64 `json:"sequence"`
-	StartedAt        string `json:"startedAt"`
-	Method           string `json:"method"`
-	Path             string `json:"path"`
-	Status           int    `json:"status"`
-	State            string `json:"state"`
-	Reason           string `json:"reason"`
-	Request          string `json:"request"`
-	Response         string `json:"response"`
-	RequestType      string `json:"requestType"`
-	ResponseType     string `json:"responseType"`
-	RequestEncoding  string `json:"requestEncoding"`
-	ResponseEncoding string `json:"responseEncoding"`
+	ID               string           `json:"id"`
+	TraceID          string           `json:"traceId"`
+	Epoch            string           `json:"epoch"`
+	Sequence         uint64           `json:"sequence"`
+	StartedAt        string           `json:"startedAt"`
+	Method           string           `json:"method"`
+	Path             string           `json:"path"`
+	Status           int              `json:"status"`
+	State            string           `json:"state"`
+	Reason           string           `json:"reason"`
+	Request          string           `json:"request"`
+	Response         string           `json:"response"`
+	RequestType      string           `json:"requestType"`
+	ResponseType     string           `json:"responseType"`
+	RequestEncoding  string           `json:"requestEncoding"`
+	ResponseEncoding string           `json:"responseEncoding"`
+	Format           string           `json:"format"`
+	RequestDecoded   bool             `json:"requestDecoded"`
+	ResponseDecoded  bool             `json:"responseDecoded"`
+	Frames           []CaptureFrame   `json:"frames,omitempty"`
+	RawRequest       []byte           `json:"-"`
+	RawResponse      []byte           `json:"-"`
+	Messages         *CaptureMessages `json:"-"`
 }
 
 const CaptureBodyLimit = 256 << 10
@@ -50,10 +57,11 @@ type CaptureSpool struct {
 	bytes      int
 	queue      chan captureEnvelope
 	active     chan struct{}
+	wsActive   chan struct{}
 }
 
 func NewCaptureSpool() *CaptureSpool {
-	s := &CaptureSpool{epoch: uuid.NewString(), queue: make(chan captureEnvelope, 8), active: make(chan struct{}, 16)}
+	s := &CaptureSpool{epoch: uuid.NewString(), queue: make(chan captureEnvelope, 8), active: make(chan struct{}, 16), wsActive: make(chan struct{}, 16)}
 	go func() {
 		for e := range s.queue {
 			s.store(e)
@@ -79,13 +87,17 @@ func (s *CaptureSpool) Lease(enabled bool) {
 }
 
 func (s *CaptureSpool) Begin() (uint64, bool) {
+	return s.begin(s.active)
+}
+func (s *CaptureSpool) BeginWebsocket() (uint64, bool) { return s.begin(s.wsActive) }
+func (s *CaptureSpool) begin(permits chan struct{}) (uint64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !time.Now().Before(s.until) {
 		return 0, false
 	}
 	select {
-	case s.active <- struct{}{}:
+	case permits <- struct{}{}:
 		return s.generation, true
 	default:
 		s.dropped++
@@ -95,8 +107,24 @@ func (s *CaptureSpool) Begin() (uint64, bool) {
 
 func (s *CaptureSpool) Finish(generation uint64, r CaptureRecord) {
 	defer func() { <-s.active }()
+	s.Update(generation, r)
+}
+func (s *CaptureSpool) FinishWebsocket(generation uint64, r CaptureRecord) {
+	defer func() { <-s.wsActive }()
+	s.Update(generation, r)
+}
+
+// Update publishes a best-effort revision without releasing a live connection permit.
+func (s *CaptureSpool) Update(generation uint64, r CaptureRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if generation != s.generation {
+		return
+	}
+	if !time.Now().Before(s.until) {
+		s.dropped++
+		return
+	}
 	s.sequence++
 	r.Sequence, r.Epoch = s.sequence, s.epoch
 	select {
@@ -107,20 +135,32 @@ func (s *CaptureSpool) Finish(generation uint64, r CaptureRecord) {
 }
 
 func (s *CaptureSpool) store(e captureEnvelope) {
+	e.record = NormalizeCapture(e.record)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e.generation != s.generation || !time.Now().Before(s.until) {
+	if e.generation != s.generation {
+		return
+	}
+	if !time.Now().Before(s.until) {
 		s.dropped++
 		return
 	}
-	size := len(e.record.Request) + len(e.record.Response)
+	size := captureRecordSize(e.record)
 	for len(s.records) > 0 && (s.bytes+size > captureBudget || len(s.records) >= captureRecordLimit) {
-		s.bytes -= len(s.records[0].Request) + len(s.records[0].Response)
+		s.bytes -= captureRecordSize(s.records[0])
 		s.records = s.records[1:]
 		s.dropped++
 	}
 	s.records = append(s.records, e.record)
 	s.bytes += size
+}
+
+func captureRecordSize(r CaptureRecord) int {
+	size := len(r.Request) + len(r.Response)
+	for _, f := range r.Frames {
+		size += len(f.Payload) + 128
+	}
+	return size
 }
 
 type CapturePage struct {

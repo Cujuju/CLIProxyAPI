@@ -13,8 +13,10 @@ import (
 
 type testCaptureSink struct{ records []logging.CaptureRecord }
 
-func (s *testCaptureSink) Begin() (uint64, bool)                    { return 1, true }
-func (s *testCaptureSink) Finish(_ uint64, r logging.CaptureRecord) { s.records = append(s.records, r) }
+func (s *testCaptureSink) Begin() (uint64, bool) { return 1, true }
+func (s *testCaptureSink) Finish(_ uint64, r logging.CaptureRecord) {
+	s.records = append(s.records, logging.NormalizeCapture(r))
+}
 
 func TestCaptureMiddlewareBoundsBodiesAndPreservesWireResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -68,7 +70,7 @@ func TestCaptureMiddlewareUnauthenticatedAndWebsocketAreExplicit(t *testing.T) {
 		if r.Request != "" || r.Response != "" {
 			t.Fatal("unsupported/unauthenticated payload retained")
 		}
-		if ws && r.Reason != "websocket-frames-not-captured" || !ws && r.Reason != "not-authenticated" {
+		if ws && r.Reason != "websocket-upgrade-not-captured" || !ws && r.Reason != "not-authenticated" {
 			t.Fatalf("wrong missing state: %+v", r)
 		}
 	}

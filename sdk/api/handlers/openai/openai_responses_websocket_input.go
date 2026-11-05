@@ -96,6 +96,9 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 			if kind != websocket.TextMessage && kind != websocket.BinaryMessage {
 				continue
 			}
+			if writer != nil {
+				writer.capture.Append("request", kind, payload)
+			}
 			// Control frames bypass response.create normalization. The original
 			// response_id, mode, and extension fields must reach upstream unchanged.
 			if json.Valid(payload) && gjson.GetBytes(payload, "type").String() == "response.interrupt" {
