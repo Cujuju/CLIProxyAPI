@@ -44,6 +44,8 @@ type UsageReporter struct {
 	accessProvider       string
 	isNativeKey          bool
 	sessionID            string
+	sessionKind          string
+	statusCode           atomic.Int32
 	parentSessionID      string
 	source               string
 	reasoning            string
@@ -142,6 +144,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		isNativeKey:     isNativeKey,
 		sessionID:       sessionID,
 		parentSessionID: parentSessionID,
+		sessionKind:     clientMeta.SessionKind,
 		source:          resolveUsageSource(auth, apiKey),
 		authType:        resolveUsageAuthType(auth),
 		serviceTier:     usage.ServiceTierFromContext(ctx),
@@ -176,6 +179,9 @@ func (r *UsageReporter) SetStream(stream bool) {
 func (r *UsageReporter) SetSessionHierarchy(sessionID, parentSessionID string) {
 	if r == nil {
 		return
+	}
+	if r.sessionID != strings.TrimSpace(sessionID) {
+		r.sessionKind = ""
 	}
 	r.sessionID = strings.TrimSpace(sessionID)
 	r.parentSessionID = strings.TrimSpace(parentSessionID)
@@ -722,6 +728,8 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		IsNativeKey:             r.isNativeKey,
 		AccessProvider:          r.accessProvider,
 		SessionID:               r.sessionID,
+		SessionKind:             r.sessionKind,
+		StatusCode:              int(r.statusCode.Load()),
 		ParentSessionID:         r.parentSessionID,
 		AuthID:                  r.authID,
 		AuthIndex:               r.authIndex,

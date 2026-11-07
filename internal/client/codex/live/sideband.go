@@ -362,6 +362,9 @@ func (h *Handler) HandleSideband(c *gin.Context) {
 	})
 	if session.sessionID != "" {
 		meta := logging.GetClientRequestMetadata(ctx)
+		if meta.SessionID != session.sessionID {
+			meta.SessionKind = ""
+		}
 		meta.SessionID = session.sessionID
 		meta.ParentSessionID = session.parentSessionID
 		ctx = logging.WithClientRequestMetadata(ctx, meta)
@@ -393,6 +396,9 @@ func (h *Handler) HandleSideband(c *gin.Context) {
 	}
 	if selection != nil && selection.CanonicalSessionID != "" {
 		meta := logging.GetClientRequestMetadata(ctx)
+		if meta.SessionID != selection.CanonicalSessionID {
+			meta.SessionKind = ""
+		}
 		meta.SessionID = selection.CanonicalSessionID
 		if selection.ParentSessionID != "" {
 			meta.ParentSessionID = selection.ParentSessionID

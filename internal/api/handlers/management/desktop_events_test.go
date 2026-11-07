@@ -91,3 +91,22 @@ func TestDesktopEventUpstreamID(t *testing.T) {
 		}
 	}
 }
+
+func TestDesktopEventAttemptObservations(t *testing.T) {
+	for _, tc := range []struct{ session, parent, kind, want string }{
+		{"codex:root", "", "root", "root"}, {"codex:child", "codex:parent", "root", ""},
+		{"", "", "fork", ""}, {"codex:child", "codex:parent", "compaction", "compaction"},
+		{"codex:child", "codex:parent", "fork", "fork"}, {"codex:child", "codex:parent", "subagent", "subagent"},
+	} {
+		record := coreusage.Record{SessionID: tc.session, ParentSessionID: tc.parent, SessionKind: tc.kind, StatusCode: 201, SelectionID: "selection"}
+		record.SessionKind = coreusage.NormalizeSessionKind(record.SessionKind, record.SessionID, record.ParentSessionID)
+		event := desktopEventFromRecord(record)
+		if event.StatusCode != 201 || event.SessionKind != tc.want || event.SelectionID != "selection" {
+			t.Fatalf("event = %+v", event)
+		}
+	}
+	event := desktopEventFromRecord(coreusage.Record{Failed: true, StatusCode: 200, Fail: coreusage.Failure{StatusCode: 429}})
+	if event.StatusCode != 429 {
+		t.Fatalf("failure status = %d", event.StatusCode)
+	}
+}

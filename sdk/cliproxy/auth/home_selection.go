@@ -9,8 +9,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
 type executionResources struct {
@@ -149,6 +151,7 @@ func (r *executionResources) Close() error {
 
 // HomeDispatchSelection keeps a Home execution scope separate from its auth.
 type HomeDispatchSelection struct {
+	SelectionID                string
 	Auth                       *Auth
 	Executor                   ProviderExecutor
 	Provider                   string
@@ -179,6 +182,7 @@ func newHomeDispatchSelection(auth *Auth, executor ProviderExecutor, provider st
 	resources := &executionResources{}
 	attemptCancels := &attemptCancels{}
 	selection := &HomeDispatchSelection{
+		SelectionID:    uuid.NewString(),
 		Auth:           auth,
 		Executor:       executor,
 		Provider:       strings.TrimSpace(provider),
@@ -226,6 +230,7 @@ func (s *HomeDispatchSelection) AttemptContext(ctx context.Context) (context.Con
 		cancelAttempt()
 		return nil, func() {}, errAdd
 	}
+	attemptCtx = coreusage.WithSelectionID(attemptCtx, s.SelectionID)
 	return context.WithValue(attemptCtx, homeAttemptContextKey{}, attempt), release, nil
 }
 

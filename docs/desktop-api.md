@@ -275,6 +275,7 @@ upstream attempt, successful or failed:
 - `reasoning_effort`: optional effective effort extracted from the final translated
   and configured upstream payload (including a numeric thinking budget where applicable).
   Omitted means unknown, not a default effort. Do not backfill it from current settings.
+- `session_kind`: optional `root`, `subagent`, `fork`, or `compaction`, with precedence compaction > fork > subagent > root. Root requires a known session and no parent; missing kind means unknown.
 - `parent_session_id`: optional parent conversation for a subagent execution.
 - `trace_id`: optional inbound request trace identifier, shared by its execution attempts.
 - `downstream_transport` and `upstream_transport`: optional observed transports per
@@ -284,7 +285,7 @@ upstream attempt, successful or failed:
   fallback or failed upgrade (for example `websocket_upgrade_426`); never raw error text.
 - `purpose: "window-start"` marks requests sent by `POST /usage/start-window`;
   absent for client traffic.
-- Failed attempts add `status_code` and a sanitized `error` summary. Attempts of
+- `status_code` is the upstream HTTP status observed for an attempt, successful or failed; omitted when unknown. Failed attempts add a sanitized `error` summary. Attempts of
   one credential selection share `selection_id`.
 - `session_id`: the client conversation, as session affinity keys it (`claude:<session uuid>`,
   `codex:<thread id>`, with `:agent:<id>` for subagents); omitted when the client sends none.

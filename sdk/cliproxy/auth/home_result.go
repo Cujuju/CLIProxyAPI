@@ -64,6 +64,7 @@ func (m *Manager) reportHomeUnauthorized(ctx context.Context, auth *Auth, provid
 		AccessProvider:    accessProvider,
 		SessionID:         clientMeta.SessionID,
 		ParentSessionID:   clientMeta.ParentSessionID,
+		SessionKind:       clientMeta.SessionKind,
 		AuthID:            auth.ID,
 		AuthIndex:         authIndex,
 		AccessTokenSHA256: accessTokenSHA256,

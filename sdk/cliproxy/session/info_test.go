@@ -762,3 +762,29 @@ func TestExtractSessionInfoEnhancedHarnesses(t *testing.T) {
 		t.Fatalf("Thread X-Parent-Thread-Id extraction failed: %+v", info)
 	}
 }
+
+func TestSessionKindPrecedence(t *testing.T) {
+	info := SessionInfo{SessionID: "session", IsCompaction: true, IsFork: true, IsSubagent: true}
+	for _, want := range []string{"compaction", "fork", "subagent", "root"} {
+		if got := info.Kind(); got != want {
+			t.Fatalf("kind = %q, want %q", got, want)
+		}
+		switch want {
+		case "compaction":
+			info.IsCompaction = false
+		case "fork":
+			info.IsFork = false
+		case "subagent":
+			info.IsSubagent = false
+		}
+	}
+	info.ParentSessionID = "parent"
+	if info.Kind() != "" {
+		t.Fatal("root with parent")
+	}
+	info.SessionID = ""
+	info.IsFork = true
+	if info.Kind() != "" {
+		t.Fatal("kind without session")
+	}
+}

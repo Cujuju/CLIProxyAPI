@@ -22,6 +22,7 @@ type ClientRequestMetadata struct {
 	UserAgent        string
 	SessionID        string
 	ParentSessionID  string
+	SessionKind      string
 	NodeKind         string
 	IsFork           bool
 	IsCompaction     bool

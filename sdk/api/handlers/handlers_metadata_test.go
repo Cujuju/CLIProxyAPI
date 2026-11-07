@@ -263,7 +263,7 @@ func TestEnrichContextWithSessionHierarchyFromBody(t *testing.T) {
 	subagentBody := []byte(`{"metadata":{"agent_id":"search-specialist"}}`)
 	ctx2 := enrichContextWithSessionHierarchy(context.Background(), headers, subagentBody, nil)
 	meta2 := logging.GetClientRequestMetadata(ctx2)
-	if meta2.SessionID != "claude:claude-root-001:agent:search-specialist" || meta2.ParentSessionID != "claude:claude-root-001" {
+	if meta2.SessionKind != "subagent" || meta2.SessionID != "claude:claude-root-001:agent:search-specialist" || meta2.ParentSessionID != "claude:claude-root-001" {
 		t.Fatalf("claude body subagent = (%q, %q), want (claude:claude-root-001:agent:search-specialist, claude:claude-root-001)", meta2.SessionID, meta2.ParentSessionID)
 	}
 
@@ -275,7 +275,7 @@ func TestEnrichContextWithSessionHierarchyFromBody(t *testing.T) {
 	topLevelBody := []byte(`{"session_id":"top-level-session"}`)
 	ctx3 := enrichContextWithSessionHierarchy(ctxWithOldParent, nil, topLevelBody, nil)
 	meta3 := logging.GetClientRequestMetadata(ctx3)
-	if meta3.SessionID != "session:top-level-session" || meta3.ParentSessionID != "" {
+	if meta3.SessionKind != "root" || meta3.SessionID != "session:top-level-session" || meta3.ParentSessionID != "" {
 		t.Fatalf("top level body session = (%q, %q), want (session:top-level-session, empty parent)", meta3.SessionID, meta3.ParentSessionID)
 	}
 
@@ -306,7 +306,7 @@ func TestEnrichContextWithSessionHierarchyFromBody(t *testing.T) {
 	})
 	ctxCleared := EnrichContextWithSessionHierarchy(ctxWithHeaderSession, nil, nil, nil)
 	metaCleared := logging.GetClientRequestMetadata(ctxCleared)
-	if metaCleared.SessionID != "" || metaCleared.ParentSessionID != "" {
+	if metaCleared.SessionKind != "" || metaCleared.SessionID != "" || metaCleared.ParentSessionID != "" {
 		t.Fatalf("cleared context = (%q, %q), want (empty, empty)", metaCleared.SessionID, metaCleared.ParentSessionID)
 	}
 

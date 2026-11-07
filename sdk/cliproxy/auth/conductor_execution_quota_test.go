@@ -210,6 +210,81 @@ func TestSyncMetadataSessionToContext(t *testing.T) {
 	}
 }
 
+func TestSyncMetadataSessionToContextSessionKind(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		kind      string
+		metadata  map[string]any
+		wantID    string
+		wantKind  string
+	}{
+		{
+			name: "unchanged identity keeps kind", sessionID: "session", kind: "subagent",
+			metadata: map[string]any{cliproxyexecutor.CanonicalSessionIDMetadataKey: " session "},
+			wantID:   "session", wantKind: "subagent",
+		},
+		{
+			name: "replaced identity clears stale kind", sessionID: "old", kind: "compaction",
+			metadata: map[string]any{cliproxyexecutor.CanonicalSessionIDMetadataKey: "new"},
+			wantID:   "new",
+		},
+		{
+			name: "derived identity clears stale kind", sessionID: "old", kind: "fork",
+			metadata: map[string]any{cliproxyexecutor.DerivedSessionIDMetadataKey: "new"},
+			wantID:   "derived:new",
+		},
+		{
+			name: "fork node", sessionID: "old", kind: "compaction",
+			metadata: map[string]any{
+				cliproxyexecutor.CanonicalSessionIDMetadataKey: "new",
+				cliproxyexecutor.NodeKindMetadataKey:           "fork",
+			},
+			wantID: "new", wantKind: "fork",
+		},
+		{
+			name: "fork flag", sessionID: "session", kind: "subagent",
+			metadata: map[string]any{
+				cliproxyexecutor.CanonicalSessionIDMetadataKey: "session",
+				cliproxyexecutor.IsForkMetadataKey:             true,
+			},
+			wantID: "session", wantKind: "fork",
+		},
+		{
+			name: "compaction node takes precedence over fork flag", sessionID: "old", kind: "fork",
+			metadata: map[string]any{
+				cliproxyexecutor.CanonicalSessionIDMetadataKey: "new",
+				cliproxyexecutor.NodeKindMetadataKey:           "compaction",
+				cliproxyexecutor.IsForkMetadataKey:             true,
+			},
+			wantID: "new", wantKind: "compaction",
+		},
+		{
+			name: "compaction flag takes precedence over fork node", sessionID: "session", kind: "fork",
+			metadata: map[string]any{
+				cliproxyexecutor.CanonicalSessionIDMetadataKey: "session",
+				cliproxyexecutor.NodeKindMetadataKey:           "fork",
+				cliproxyexecutor.IsCompactionMetadataKey:       true,
+			},
+			wantID: "session", wantKind: "compaction",
+		},
+		{name: "empty canonical clears kind", sessionID: "old", kind: "fork"},
+		{name: "empty canonical clears orphan kind", kind: "compaction"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := internallogging.WithClientRequestMetadata(context.Background(), internallogging.ClientRequestMetadata{
+				SessionID:   test.sessionID,
+				SessionKind: test.kind,
+			})
+			meta := internallogging.GetClientRequestMetadata(syncMetadataSessionToContext(ctx, test.metadata))
+			if meta.SessionID != test.wantID || meta.SessionKind != test.wantKind {
+				t.Fatalf("session = (%q, %q), want (%q, %q)", meta.SessionID, meta.SessionKind, test.wantID, test.wantKind)
+			}
+		})
+	}
+}
+
 func TestApplyRequestAfterAuthInterceptorSessionClearing(t *testing.T) {
 	req := cliproxyexecutor.Request{
 		Model:   "gpt-5.6-luna",

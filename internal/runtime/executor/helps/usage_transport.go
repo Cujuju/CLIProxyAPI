@@ -101,11 +101,25 @@ func transportReporter(ctx context.Context) *UsageReporter {
 	return r
 }
 
+func observeStatus(ctx context.Context, response *http.Response) {
+	if response != nil {
+		observeStatusCode(ctx, response.StatusCode)
+	}
+}
+
+func observeStatusCode(ctx context.Context, status int) {
+	if r := transportReporter(ctx); r != nil && status > 0 {
+		r.statusCode.Store(int32(status))
+	}
+}
+
 // DoHTTP observes the actual HTTP call without changing its client, transport,
 // headers, body, response, or cancellation semantics.
 func DoHTTP(client *http.Client, req *http.Request) (*http.Response, error) {
 	transportReporter(req.Context()).ObserveUpstreamTransport("http")
-	return client.Do(req)
+	response, err := client.Do(req)
+	observeStatus(req.Context(), response)
+	return response, err
 }
 
 // ObserveWebsocketDial records an attempted upgrade and a bounded failure code.
@@ -116,6 +130,7 @@ func ObserveWebsocketDial(ctx context.Context, response *http.Response, err erro
 		return
 	}
 	r.ObserveUpstreamTransport("websocket")
+	observeStatus(ctx, response)
 	if err == nil {
 		return
 	}

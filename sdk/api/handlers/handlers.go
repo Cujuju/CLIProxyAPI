@@ -327,6 +327,7 @@ func EnrichContextWithSessionHierarchy(ctx context.Context, headers http.Header,
 	if info, ok := coresession.ExtractSessionInfo(headers, payload, metadata); ok {
 		meta.SessionID = info.SessionID
 		meta.ParentSessionID = info.ParentSessionID
+		meta.SessionKind = info.Kind()
 		if meta.SessionID != "" && meta.SessionID == meta.ParentSessionID {
 			meta.ParentSessionID = ""
 		}
@@ -335,6 +336,7 @@ func EnrichContextWithSessionHierarchy(ctx context.Context, headers http.Header,
 	}
 	if meta.SessionID != "" || meta.ParentSessionID != "" || util.SessionIDFromContext(ctx) != "" {
 		meta.SessionID = ""
+		meta.SessionKind = ""
 		meta.ParentSessionID = ""
 		ctx = logging.WithClientRequestMetadata(ctx, meta)
 		return util.WithSessionID(ctx, "")

@@ -234,6 +234,9 @@ func (h *Handler) Handle(c *gin.Context) {
 	}
 	if selection != nil && selection.CanonicalSessionID != "" {
 		meta := logging.GetClientRequestMetadata(ctx)
+		if meta.SessionID != selection.CanonicalSessionID {
+			meta.SessionKind = ""
+		}
 		meta.SessionID = selection.CanonicalSessionID
 		if selection.ParentSessionID != "" {
 			meta.ParentSessionID = selection.ParentSessionID

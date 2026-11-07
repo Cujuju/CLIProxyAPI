@@ -56,6 +56,7 @@ type desktopRequestEvent struct {
 	Purpose string `json:"purpose,omitempty"`
 	// SessionID is the client conversation (e.g. "claude:<session uuid>"); empty when the client sends none.
 	SessionID       string `json:"session_id,omitempty"`
+	SessionKind     string `json:"session_kind,omitempty"`
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// UserAgent is the client's User-Agent header, naming the program that sent the request; empty when it sent none.
 	UserAgent string `json:"user_agent,omitempty"`
@@ -110,11 +111,15 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 		At: record.RequestedAt.UTC(), RequestID: record.RequestID, UpstreamID: record.UpstreamID, SelectionID: record.SelectionID, TraceID: record.TraceID, SessionID: record.SessionID,
 		UserAgent: record.UserAgent, Provider: record.Provider, Model: record.Model, Alias: record.Alias, AuthID: record.AuthID, AuthIndex: record.AuthIndex,
 		ReasoningEffort: record.ReasoningEffort, ParentSessionID: record.ParentSessionID,
+		SessionKind:         record.SessionKind,
 		DownstreamTransport: record.DownstreamTransport, UpstreamTransport: record.UpstreamTransport, TransportFallbackReason: record.TransportFallbackReason,
-		Stream: record.Stream, Failed: record.Failed, StatusCode: record.Fail.StatusCode,
+		Stream: record.Stream, Failed: record.Failed, StatusCode: record.StatusCode,
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),
 		InputTokens: record.Detail.InputTokens, Output: record.Detail.OutputTokens, Cached: record.Detail.CachedTokens,
 		CacheWrite: record.Detail.CacheCreationTokens,
+	}
+	if record.Fail.StatusCode != 0 {
+		event.StatusCode = record.Fail.StatusCode
 	}
 	if record.AccessProvider == WindowStartAccessProvider {
 		event.Purpose = WindowStartAccessProvider

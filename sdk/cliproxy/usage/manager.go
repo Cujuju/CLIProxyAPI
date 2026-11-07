@@ -54,6 +54,8 @@ type Record struct {
 	// UserAgent is the client request's User-Agent header; it names the calling program.
 	UserAgent       string
 	SessionID       string
+	SessionKind     string
+	StatusCode      int
 	ParentSessionID string
 	AuthID          string
 	AuthIndex       string
@@ -694,6 +696,22 @@ func (m *Manager) RegisterNamed(name string, plugin Plugin) {
 	m.pluginsMu.Unlock()
 }
 
+// NormalizeSessionKind validates a relationship against the final record identity.
+func NormalizeSessionKind(kind, sessionID, parentSessionID string) string {
+	if strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	switch kind {
+	case "root":
+		if strings.TrimSpace(parentSessionID) == "" {
+			return kind
+		}
+	case "subagent", "fork", "compaction":
+		return kind
+	}
+	return ""
+}
+
 // Publish enqueues a usage record for processing. If no plugin is registered
 // the record will be discarded downstream.
 func (m *Manager) Publish(ctx context.Context, record Record) {
@@ -739,6 +757,7 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 			record.IsNativeKey = IsNativeAccessProvider(record.AccessProvider)
 		}
 	}
+	record.SessionKind = NormalizeSessionKind(record.SessionKind, record.SessionID, record.ParentSessionID)
 	ctx = WithCapturedIdentity(ctx, record.APIKey, record.AccessProvider, record.IsNativeKey)
 	// ensure worker is running even if Start was not called explicitly
 	m.Start(context.Background())

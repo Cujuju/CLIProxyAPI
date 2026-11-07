@@ -1111,7 +1111,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			clearSchedulerSelectionID(opts.Metadata)
 		}
 		execCtx = contextWithRequestedModelAlias(execCtx, pickOpts, routeModel)
-		execCtx = coreusage.WithSelectionID(execCtx, selectionIDFromOptions(pickOpts))
+		if selection == nil {
+			execCtx = coreusage.WithSelectionID(execCtx, selectionIDFromOptions(pickOpts))
+		}
 		execCtx = newUpstreamAttemptContext(execCtx)
 		models, pooled, aliasResult, routing := m.executionModelCandidatesWithAlias(auth, routeModel)
 		// Home owns dispatched credential availability; only local selections need state filtering.
@@ -2195,9 +2197,10 @@ func syncMetadataSessionToContext(ctx context.Context, metadata map[string]any) 
 	canonicalID = strings.TrimSpace(canonicalID)
 	if canonicalID == "" {
 		clientMeta := logging.GetClientRequestMetadata(ctx)
-		if clientMeta.SessionID != "" || clientMeta.ParentSessionID != "" || clientMeta.NodeKind != "" || clientMeta.IsFork || clientMeta.IsCompaction {
+		if clientMeta.SessionID != "" || clientMeta.ParentSessionID != "" || clientMeta.SessionKind != "" || clientMeta.NodeKind != "" || clientMeta.IsFork || clientMeta.IsCompaction {
 			clientMeta.SessionID = ""
 			clientMeta.ParentSessionID = ""
+			clientMeta.SessionKind = ""
 			clientMeta.NodeKind = ""
 			clientMeta.IsFork = false
 			clientMeta.IsCompaction = false
@@ -2206,7 +2209,11 @@ func syncMetadataSessionToContext(ctx context.Context, metadata map[string]any) 
 		return util.WithSessionID(ctx, "")
 	}
 	clientMeta := logging.GetClientRequestMetadata(ctx)
-	clientMeta.SessionID = cliproxysession.BoundSessionIdentity(canonicalID)
+	sessionID := cliproxysession.BoundSessionIdentity(canonicalID)
+	if clientMeta.SessionID != sessionID {
+		clientMeta.SessionKind = ""
+	}
+	clientMeta.SessionID = sessionID
 	if parentID, ok := metadata[cliproxyexecutor.ParentSessionIDMetadataKey].(string); ok && strings.TrimSpace(parentID) != "" {
 		clientMeta.ParentSessionID = cliproxysession.BoundSessionIdentity(strings.TrimSpace(parentID))
 	} else {
@@ -2229,6 +2236,12 @@ func syncMetadataSessionToContext(ctx context.Context, metadata map[string]any) 
 		clientMeta.IsCompaction = isCompaction
 	} else {
 		clientMeta.IsCompaction = false
+	}
+	switch {
+	case clientMeta.IsCompaction || clientMeta.NodeKind == "compaction":
+		clientMeta.SessionKind = "compaction"
+	case clientMeta.IsFork || clientMeta.NodeKind == "fork":
+		clientMeta.SessionKind = "fork"
 	}
 	ctx = logging.WithClientRequestMetadata(ctx, clientMeta)
 	return util.WithSessionID(ctx, clientMeta.SessionID)

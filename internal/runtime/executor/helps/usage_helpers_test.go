@@ -1520,3 +1520,22 @@ func TestFailFromErrorsCarriesStreamTruncatedCode(t *testing.T) {
 		t.Fatalf("plain error must not gain truncated classification, got code %q", plain.Code)
 	}
 }
+
+func TestUsageReporterObservedStatusAndSessionKind(t *testing.T) {
+	ctx := logging.WithClientRequestMetadata(context.Background(), logging.ClientRequestMetadata{SessionID: "codex:root", SessionKind: "root"})
+	r := NewUsageReporter(ctx, "codex", "model", nil)
+	ctx = r.WithTransportContext(ctx)
+	RecordAPIResponseMetadata(ctx, &config.Config{}, http.StatusCreated, nil)
+	record := r.buildRecord(usage.Detail{}, false)
+	if record.StatusCode != 201 || record.SessionKind != "root" {
+		t.Fatalf("record = %+v", record)
+	}
+	r.SetSessionHierarchy("codex:root", "codex:parent")
+	if record := r.buildRecord(usage.Detail{}, false); usage.NormalizeSessionKind(record.SessionKind, record.SessionID, record.ParentSessionID) != "" {
+		t.Fatal("root retained with parent")
+	}
+	r.SetSessionHierarchy("codex:canonical", "")
+	if record := r.buildRecord(usage.Detail{}, false); record.SessionKind != "" {
+		t.Fatal("kind retained for replaced identity")
+	}
+}

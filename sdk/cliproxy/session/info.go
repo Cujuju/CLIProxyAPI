@@ -943,6 +943,25 @@ func BoundSessionIdentity(id string) string {
 	return prefix + "#" + hashHex
 }
 
+// Kind reports the observed relationship, in order of specificity.
+func (info SessionInfo) Kind() string {
+	if info.SessionID == "" {
+		return ""
+	}
+	switch {
+	case info.IsCompaction || info.NodeKind == "compaction":
+		return "compaction"
+	case info.IsFork || info.NodeKind == "fork":
+		return "fork"
+	case info.IsSubagent || info.NodeKind == "subagent" || (info.AgentName != "" && info.AgentName != "main"):
+		return "subagent"
+	case info.ParentSessionID == "":
+		return "root"
+	default:
+		return ""
+	}
+}
+
 func finalizeSessionInfo(info SessionInfo) (SessionInfo, bool) {
 	if info.SessionID == "" {
 		return SessionInfo{}, false

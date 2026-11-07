@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -26,6 +28,19 @@ func TestHomeDispatchSelectionOwnsScopeOutsideAuth(t *testing.T) {
 	selection, errSelection := newHomeDispatchSelection(&Auth{ID: "cred-1", Provider: "codex"}, nil, "codex", scope)
 	if errSelection != nil {
 		t.Fatal(errSelection)
+	}
+	if _, err := uuid.Parse(selection.SelectionID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		ctx, release, err := selection.AttemptContext(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if coreusage.SelectionIDFromContext(ctx) != selection.SelectionID {
+			t.Fatal("selection identity lost")
+		}
+		release()
 	}
 	clone := selection.CloneAuth()
 	if clone == nil || clone.ID != "cred-1" || clone.Runtime != nil {

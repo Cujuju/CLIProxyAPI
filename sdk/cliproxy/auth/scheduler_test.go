@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
@@ -3035,7 +3036,7 @@ func TestManagerPluginSchedulerSelectionID(t *testing.T) {
 		}
 	})
 
-	t.Run("home_execute_count_and_stream_clear_stale_selection_id", func(t *testing.T) {
+	t.Run("home_execute_count_and_stream_replace_stale_selection_id", func(t *testing.T) {
 		dispatcher := &retryContractHomeDispatcher{authIDs: []string{"home-auth-1", "home-auth-1", "home-auth-1"}}
 		homeReg := executionregistry.New()
 		manager := NewManager(nil, nil, nil)
@@ -3086,14 +3087,14 @@ func TestManagerPluginSchedulerSelectionID(t *testing.T) {
 		for range streamRes.Chunks {
 		}
 
-		if execSelID != "" || execMetaHasKey {
-			t.Fatalf("Home Execute leaked SelectionID=%q metaHasKey=%v", execSelID, execMetaHasKey)
+		if _, err := uuid.Parse(execSelID); err != nil || execMetaHasKey {
+			t.Fatalf("Home Execute invalid SelectionID=%q metaHasKey=%v", execSelID, execMetaHasKey)
 		}
-		if countSelID != "" || countMetaHasKey {
-			t.Fatalf("Home ExecuteCount leaked SelectionID=%q metaHasKey=%v", countSelID, countMetaHasKey)
+		if _, err := uuid.Parse(countSelID); err != nil || countMetaHasKey {
+			t.Fatalf("Home ExecuteCount invalid SelectionID=%q metaHasKey=%v", countSelID, countMetaHasKey)
 		}
-		if streamSelID != "" || streamMetaHasKey {
-			t.Fatalf("Home ExecuteStream leaked SelectionID=%q metaHasKey=%v", streamSelID, streamMetaHasKey)
+		if _, err := uuid.Parse(streamSelID); err != nil || streamMetaHasKey {
+			t.Fatalf("Home ExecuteStream invalid SelectionID=%q metaHasKey=%v", streamSelID, streamMetaHasKey)
 		}
 	})
 }
