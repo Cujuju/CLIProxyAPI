@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"bufio"
-	"bytes"
 	"io"
 	"net"
 	"net/http"
@@ -14,18 +13,9 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 )
 
-type boundedCapture struct {
-	bytes.Buffer
-	truncated bool
-}
+type boundedCapture struct{ logging.CaptureBuffer }
 
-func (b *boundedCapture) add(p []byte) {
-	n := min(len(p), logging.CaptureBodyLimit-b.Len())
-	if n < len(p) {
-		b.truncated = true
-	}
-	_, _ = b.Buffer.Write(p[:n])
-}
+func (b *boundedCapture) add(p []byte) { _, _ = b.Write(p) }
 
 type captureReader struct {
 	io.ReadCloser
@@ -63,11 +53,7 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 }
 func (w *captureWriter) WriteString(p string) (int, error) {
 	n, e := w.ResponseWriter.WriteString(p)
-	limit := min(n, logging.CaptureBodyLimit-w.body.Len())
-	w.body.add([]byte(p[:limit]))
-	if limit < n {
-		w.body.truncated = true
-	}
+	w.body.add([]byte(p[:n]))
 	if e != nil || n != len(p) {
 		w.writeFailed = true
 	}
@@ -139,6 +125,9 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 		c.Writer = writer
 		defer func() {
 			panicValue := recover()
+			if messages != nil {
+				messages.Close(false)
+			}
 			r.Status = writer.Status()
 			r.ResponseType = writer.Header().Get("Content-Type")
 			r.ResponseEncoding = writer.Header().Get("Content-Encoding")
@@ -149,7 +138,6 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 				r.Reason = "not-authenticated"
 			} else if writer.hijacked || strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
 				if messages != nil && writer.hijacked {
-					messages.Close(false)
 					r.Messages = messages
 					r.Status = 101
 				} else {
@@ -159,7 +147,8 @@ func RequestCaptureMiddleware(spool captureSink) gin.HandlerFunc {
 			} else {
 				r.RawRequest = request.Bytes()
 				r.RawResponse = response.Bytes()
-				if request.truncated || response.truncated {
+				r.RequestCut, r.ResponseCut = request.Cut(), response.Cut()
+				if r.RequestCut != nil || r.ResponseCut != nil {
 					r.State = "partial"
 					r.Reason = "byte-limit"
 				}

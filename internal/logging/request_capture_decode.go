@@ -51,10 +51,10 @@ func NormalizeCapture(r CaptureRecord) CaptureRecord {
 	} else {
 		r.Format = "http"
 		if r.RawRequest != nil {
-			r.Request, r.RequestDecoded = decodeCaptureBody(r.RawRequest, r.RequestEncoding, &r)
+			r.Request, r.RequestDecoded, r.RequestCut = decodeCaptureBody(r.RawRequest, r.RequestEncoding, r.RequestCut, &r)
 		}
 		if r.RawResponse != nil {
-			r.Response, r.ResponseDecoded = decodeCaptureBody(r.RawResponse, r.ResponseEncoding, &r)
+			r.Response, r.ResponseDecoded, r.ResponseCut = decodeCaptureBody(r.RawResponse, r.ResponseEncoding, r.ResponseCut, &r)
 		}
 	}
 	r.RawRequest = nil
@@ -71,59 +71,84 @@ func capturePartial(r *CaptureRecord, reason string) {
 	}
 }
 
-func decodeCaptureBody(raw []byte, encoding string, r *CaptureRecord) (string, bool) {
-	body := raw
+func decodeCaptureBody(raw []byte, encoding string, cut *CaptureCut, r *CaptureRecord) (string, bool, *CaptureCut) {
 	encodings := strings.Split(strings.ToLower(strings.TrimSpace(encoding)), ",")
-	if len(encodings) > 2 {
-		capturePartial(r, "unsupported-content-encoding")
-		return "Base64 wire body:\n" + base64.StdEncoding.EncodeToString(raw), false
+	fallback := func() (string, bool, *CaptureCut) {
+		capturePartial(r, "unsupported-or-invalid-content-encoding")
+		text := "Base64 wire body:\n" + base64.StdEncoding.EncodeToString(raw)
+		if cut != nil {
+			return text, false, &CaptureCut{Offset: len(text)}
+		}
+		return text, false, nil
 	}
+	if len(encodings) > 2 {
+		return fallback()
+	}
+	encoded := strings.TrimSpace(encoding) != "" && strings.TrimSpace(encoding) != "identity"
+	var reader io.Reader = bytes.NewReader(raw)
+	if encoded && cut != nil {
+		reader = bytes.NewReader(raw[:cut.Offset])
+	}
+	var closers []func()
+	defer func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+	}()
 	for i := len(encodings) - 1; i >= 0; i-- {
-		var reader io.Reader
-		var closeReader func()
 		switch strings.TrimSpace(encodings[i]) {
 		case "", "identity":
-			continue
 		case "gzip", "x-gzip":
-			decoder, err := gzip.NewReader(bytes.NewReader(body))
+			d, err := gzip.NewReader(reader)
 			if err != nil {
-				capturePartial(r, "gzip-decode-failed")
-				return "Base64 wire body:\n" + base64.StdEncoding.EncodeToString(raw), false
+				return fallback()
 			}
-			reader = decoder
-			closeReader = func() { _ = decoder.Close() }
+			reader = d
+			closers = append(closers, func() { _ = d.Close() })
 		case "zstd":
-			decoder, err := zstd.NewReader(bytes.NewReader(body), zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(8<<20), zstd.WithDecoderMaxWindow(8<<20))
+			d, err := zstd.NewReader(reader, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(CaptureBodyLimit), zstd.WithDecoderMaxWindow(CaptureBodyLimit))
 			if err != nil {
-				capturePartial(r, "zstd-decode-failed")
-				return "Base64 wire body:\n" + base64.StdEncoding.EncodeToString(raw), false
+				return fallback()
 			}
-			reader = decoder
-			closeReader = decoder.Close
+			reader = d
+			closers = append(closers, d.Close)
 		default:
-			capturePartial(r, "unsupported-content-encoding")
-			return "Base64 wire body:\n" + base64.StdEncoding.EncodeToString(raw), false
+			return fallback()
 		}
-		decoded, err := io.ReadAll(io.LimitReader(reader, CaptureBodyLimit+1))
-		closeReader()
-		if err != nil {
-			capturePartial(r, "encoded-body-incomplete")
-		}
-		if len(decoded) > CaptureBodyLimit {
-			decoded = decoded[:CaptureBodyLimit]
-			capturePartial(r, "decoded-byte-limit")
-		}
-		if len(decoded) == 0 && err != nil {
-			return "Base64 wire body:\n" + base64.StdEncoding.EncodeToString(raw), false
-		}
-		body = decoded
 	}
-	if len(body) > CaptureBodyLimit {
-		body = body[:CaptureBodyLimit]
+	if encoded {
+		var buffer CaptureBuffer
+		var err error
+		if cut != nil {
+			_, err = io.Copy(&buffer, io.LimitReader(reader, CaptureBodyLimit))
+		} else {
+			_, err = io.Copy(&buffer, reader)
+		}
+		raw = buffer.Bytes()
+		if len(raw) == 0 && err != nil {
+			return fallback()
+		}
+		if cut != nil || err != nil {
+			capturePartial(r, "encoded-body-incomplete")
+			if middle := buffer.Cut(); middle != nil {
+				raw = raw[:middle.Offset]
+			}
+			cut = &CaptureCut{Offset: len(raw)}
+		} else {
+			cut = buffer.Cut()
+		}
+	} else if len(raw) > CaptureBodyLimit {
+		var buffer CaptureBuffer
+		_, _ = buffer.Write(raw)
+		raw, cut = buffer.Bytes(), buffer.Cut()
+	}
+	if cut != nil && encoded {
 		capturePartial(r, "decoded-byte-limit")
 	}
-	if !utf8.Valid(body) {
+	text, cut := captureText(raw, cut)
+	if !utf8.ValidString(text) {
 		capturePartial(r, "invalid-utf8")
+		text = strings.ToValidUTF8(text, "\uFFFD")
 	}
-	return strings.ToValidUTF8(string(body), "�"), true
+	return text, true, cut
 }

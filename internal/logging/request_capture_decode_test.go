@@ -5,7 +5,9 @@ import (
 	"compress/gzip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -70,14 +72,14 @@ func TestNormalizeCaptureDecodedLimitsCorruptionAndUnsupported(t *testing.T) {
 	}
 }
 func TestCaptureMessagesBoundsLiveRevisionsAndImmutablePrefixes(t *testing.T) {
-	notifications := 0
-	m := NewCaptureMessages(func() { notifications++ })
+	var notifications atomic.Int64
+	m := NewCaptureMessages(func() { notifications.Add(1) })
 	p := []byte(`{"type":"response.create","input":"readable"}`)
 	m.Append("request", 1, p)
 	p[0] = 'x'
 	m.Append("response", 1, []byte(`{"type":"response.output_text.delta","delta":"hello"}`))
 	r := NormalizeCapture(CaptureRecord{Messages: m})
-	if r.State != "pending" || r.Format != "websocket" || len(r.Frames) != 2 || r.Frames[0].Payload[0] != '{' || notifications != 2 {
+	if r.State != "pending" || r.Format != "websocket" || len(r.Frames) != 2 || r.Frames[0].Payload[0] != '{' || notifications.Load() != 1 {
 		t.Fatalf("bad live capture: %+v", r)
 	}
 	m.Close(false)
@@ -145,5 +147,110 @@ func TestCaptureMessagesConcurrentSnapshots(t *testing.T) {
 	r := NormalizeCapture(CaptureRecord{Messages: m})
 	if len(r.Frames) != CaptureFrameCount || r.State != "partial" {
 		t.Fatalf("unsafe concurrent capture: %d %s", len(r.Frames), r.State)
+	}
+}
+
+func TestCaptureHeadTailAndCuts(t *testing.T) {
+	half := CaptureBodyLimit / 2
+	body := append(bytes.Repeat([]byte("h"), half), bytes.Repeat([]byte("m"), 17)...)
+	body = append(body, bytes.Repeat([]byte("t"), half)...)
+	for _, encoding := range []string{"", "gzip", "zstd"} {
+		wire := body
+		if encoding == "gzip" {
+			wire = gzipCapture(t, body)
+		}
+		if encoding == "zstd" {
+			wire = zstdCapture(t, body)
+		}
+		r := NormalizeCapture(CaptureRecord{RawRequest: wire, RequestEncoding: encoding})
+		if r.RequestCut == nil || r.RequestCut.Offset != half || *r.RequestCut.Omitted != 17 || r.Request != strings.Repeat("h", half)+strings.Repeat("t", half) {
+			t.Fatalf("bad %s head/tail cut", encoding)
+		}
+	}
+	var b CaptureBuffer
+	for _, part := range [][]byte{body[:half-1], body[half-1 : half+12], body[half+12:]} {
+		_, _ = b.Write(part)
+	}
+	r := NormalizeCapture(CaptureRecord{RawRequest: b.Bytes(), RequestCut: b.Cut()})
+	if r.RequestCut == nil || *r.RequestCut.Omitted != 17 || !strings.HasSuffix(r.Request, "tttt") {
+		t.Fatal("stream ring failed")
+	}
+	exact := NormalizeCapture(CaptureRecord{RawRequest: body[:CaptureBodyLimit]})
+	if exact.RequestCut != nil {
+		t.Fatal("exact bound cut")
+	}
+	utf := append(bytes.Repeat([]byte("a"), half-1), []byte("€middle€")...)
+	utf = append(utf, bytes.Repeat([]byte("z"), half-1)...)
+	r = NormalizeCapture(CaptureRecord{RawRequest: utf})
+	if r.RequestCut == nil || r.RequestCut.Offset != half-1 || strings.Contains(r.Request, "�") {
+		t.Fatal("split UTF-8 character")
+	}
+	wire := gzipCapture(t, body)
+	unknown := int64(1)
+	r = NormalizeCapture(CaptureRecord{RawRequest: wire, RequestEncoding: "gzip", RequestCut: &CaptureCut{Offset: len(wire) - 1, Omitted: &unknown}})
+	if r.RequestCut == nil || r.RequestCut.Omitted != nil || r.RequestCut.Offset != len(r.Request) {
+		t.Fatal("encoded wire cut must be unknown")
+	}
+}
+func TestCaptureMessagesRetainsEarliestAndLatest(t *testing.T) {
+	m := NewCaptureMessages(nil)
+	for i := 0; i < CaptureFrameCount+10; i++ {
+		m.Append("request", 1, []byte("x"))
+	}
+	frames, _, _, _ := m.Snapshot()
+	if len(frames) != CaptureFrameCount || frames[0].Index != 1 || frames[len(frames)-1].Index != CaptureFrameCount+10 || frames[CaptureFrameCount/2].Index == CaptureFrameCount/2+1 {
+		t.Fatal("missing head/tail index gap")
+	}
+	m = NewCaptureMessages(nil)
+	for i := 0; i < 5; i++ {
+		m.Append("request", 1, bytes.Repeat([]byte("x"), CaptureBodyLimit/4))
+	}
+	frames, _, _, _ = m.Snapshot()
+	if frames[0].Index != 1 || frames[len(frames)-1].Index != 5 || len(frames) != 4 {
+		t.Fatal("direction budget lost earliest/latest")
+	}
+	m = NewCaptureMessages(nil)
+	m.Append("request", 1, bytes.Repeat([]byte("x"), CaptureFrameLimit+1))
+	frames, _, _, _ = m.Snapshot()
+	if frames[0].Cut == nil || !frames[0].Truncated || *frames[0].Cut.Omitted != 1 {
+		t.Fatal("frame cut missing")
+	}
+}
+
+func TestCaptureMessagesCoalescesBurstAndCancelsOnClose(t *testing.T) {
+	const burstMessages = 32
+	revisions := make(chan int, burstMessages)
+	var m *CaptureMessages
+	m = NewCaptureMessages(func() {
+		frames, _, _, _ := m.Snapshot()
+		revisions <- len(frames)
+	})
+	defer m.Close(false)
+	for i := 0; i < burstMessages; i++ {
+		m.Append("response", 1, []byte("delta"))
+	}
+	if count := <-revisions; count != 1 {
+		t.Fatalf("immediate revision has %d frames", count)
+	}
+	deadline := time.NewTimer(captureLiveRevisionInterval * 2)
+	defer deadline.Stop()
+	select {
+	case count := <-revisions:
+		if count != burstMessages {
+			t.Fatalf("trailing revision has %d frames", count)
+		}
+	case <-deadline.C:
+		t.Fatal("trailing revision missing")
+	}
+	if len(revisions) != 0 {
+		t.Fatal("burst produced extra revisions")
+	}
+	m.Append("response", 1, []byte("after trailing"))
+	m.Close(false)
+	// Simulate a timer callback already dispatched when Close stopped the timer.
+	m.flushNotify()
+	m.Append("response", 1, []byte("after close"))
+	if len(revisions) != 0 || m.timer != nil {
+		t.Fatal("close retained live revision work")
 	}
 }

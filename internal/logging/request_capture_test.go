@@ -70,7 +70,7 @@ func TestCaptureSpoolBoundsActiveRequestsAndRetention(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		s.store(captureEnvelope{record: CaptureRecord{Sequence: uint64(i + 1), Request: strings.Repeat("x", CaptureBodyLimit), Response: strings.Repeat("y", CaptureBodyLimit)}})
 	}
-	if s.bytes > captureBudget || len(s.records) > captureRecordLimit || s.records[0].Sequence != 9 {
+	if s.bytes > captureBudget || len(s.records) > captureRecordLimit || s.records[0].Sequence != uint64(41-captureBudget/(2*CaptureBodyLimit)) {
 		t.Fatalf("budget not enforced: %d bytes, first %d", s.bytes, s.records[0].Sequence)
 	}
 	s.until = time.Now().Add(-time.Second)

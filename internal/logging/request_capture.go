@@ -30,13 +30,15 @@ type CaptureRecord struct {
 	RequestDecoded   bool             `json:"requestDecoded"`
 	ResponseDecoded  bool             `json:"responseDecoded"`
 	Frames           []CaptureFrame   `json:"frames,omitempty"`
+	RequestCut       *CaptureCut      `json:"requestCut,omitempty"`
+	ResponseCut      *CaptureCut      `json:"responseCut,omitempty"`
 	RawRequest       []byte           `json:"-"`
 	RawResponse      []byte           `json:"-"`
 	Messages         *CaptureMessages `json:"-"`
 }
 
-const CaptureBodyLimit = 256 << 10
-const captureBudget = 16 << 20
+const CaptureBodyLimit = 8 << 20
+const captureBudget = 64 << 20
 const captureRecordLimit = 256
 
 type captureEnvelope struct {
