@@ -9,6 +9,7 @@ import (
 
 // CaptureRecord v1 identifies an inbound exchange, independently of usage executions.
 // HTTP bodies are decoded in the worker; frames are bounded downstream messages.
+// RequestCut/ResponseCut are always sent, null for a complete side; clients read their absence as a proxy before per-side cuts.
 type CaptureRecord struct {
 	ID               string           `json:"id"`
 	TraceID          string           `json:"traceId"`
@@ -30,8 +31,8 @@ type CaptureRecord struct {
 	RequestDecoded   bool             `json:"requestDecoded"`
 	ResponseDecoded  bool             `json:"responseDecoded"`
 	Frames           []CaptureFrame   `json:"frames,omitempty"`
-	RequestCut       *CaptureCut      `json:"requestCut,omitempty"`
-	ResponseCut      *CaptureCut      `json:"responseCut,omitempty"`
+	RequestCut       *CaptureCut      `json:"requestCut"`
+	ResponseCut      *CaptureCut      `json:"responseCut"`
 	RawRequest       []byte           `json:"-"`
 	RawResponse      []byte           `json:"-"`
 	Messages         *CaptureMessages `json:"-"`

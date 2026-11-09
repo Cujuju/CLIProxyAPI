@@ -1,11 +1,22 @@
 package logging
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCaptureRecordAlwaysSendsSideCuts(t *testing.T) {
+	data, err := json.Marshal(CaptureRecord{Frames: []CaptureFrame{{Payload: "complete"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(data); !strings.Contains(s, `"requestCut":null`) || !strings.Contains(s, `"responseCut":null`) || strings.Contains(s, `"cut"`) {
+		t.Fatalf("complete sides must send null cuts and complete frames no cut: %s", s)
+	}
+}
 
 func testCaptureSpool() *CaptureSpool {
 	return &CaptureSpool{epoch: "test-epoch", queue: make(chan captureEnvelope, 8), active: make(chan struct{}, 16), wsActive: make(chan struct{}, 16)}
