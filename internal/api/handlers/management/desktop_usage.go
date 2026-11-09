@@ -14,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexusage"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/lifecycle"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/resetcredits"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -245,9 +246,9 @@ func desktopPlan(auth *coreauth.Auth) gin.H {
 	return nil
 }
 
-// desktopResetCredits is a Codex account's rate-limit reset credits; nil when never reported.
+// desktopResetCredits is a Codex or Claude account's rate-limit reset credits; nil when never reported.
 func desktopResetCredits(auth *coreauth.Auth) gin.H {
-	credits, ok := codexusage.ResetCreditsOf(auth)
+	credits, ok := resetcredits.Of(auth)
 	if !ok {
 		return nil
 	}

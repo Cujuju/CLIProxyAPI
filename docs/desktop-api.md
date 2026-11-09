@@ -75,8 +75,10 @@ PUT /v8/management/config/routing/session-affinity  body: true
 
 Traffic headers carry only the 5-hour, weekly and weekly Fable windows, and are
 not persisted. The proxy therefore looks up each enabled Claude OAuth
-credential's usage (`GET https://api.anthropic.com/api/oauth/usage`), which also
-reports per-model and spend windows. Lookups are stored apart from header
+credential's usage (`GET https://api.anthropic.com/api/oauth/usage?cedar_ember=1`),
+which also reports per-model and spend windows and the account's reset credits.
+Lookups and reset claims send the credential's Claude Code device-profile
+User-Agent: Claude reports reset credits only to Claude Code. Lookups are stored apart from header
 readings: traffic updates the windows its headers carry and never removes
 lookup-only windows. A window both report comes from the newer reading, except
 a response header never lowers a lookup's usage for the same period (headers
@@ -146,15 +148,19 @@ The legacy setting name is retained for existing configurations.
   `null` before the first lookup and for other providers. `multiplier`: 5-hour
   usage relative to Claude Pro, from the tier (`..._5x` = 5; Pro = 1); `null`
   when unpublished (Team, Enterprise, every Codex plan).
-- `reset_credits`: a Codex account's rate-limit reset credits from ChatGPT's
-  usage document, looked up every 15 minutes (the lookup also records windows):
+- `reset_credits`: a Codex or Claude account's rate-limit reset credits, from
+  its usage lookup (Codex: every 15 minutes, also recording windows; Claude: the
+  usage lookup above):
   `{"available": 1, "applicable": 0, "checked_at": "2026-10-26T12:00:00Z", "expiries": ["2026-11-25T12:00:00Z"]}`.
-  `available`: credits held. `applicable`: credits usable now, against a reached
-  limit. `expiries`: when held credits expire, soonest first, from ChatGPT's
-  reset-credit list (read only while credits are held). It can be shorter than
-  `available`: a credit without an expiry, or a failed list lookup, adds none.
-  `null` before the first lookup, when the account reports none, and for
-  other providers.
+  `available`: credits held. `applicable`: credits usable now (Codex: against a
+  reached limit; Claude: unpaused grants Claude marks usable, none during a
+  claim cooldown). `expiries`: when held credits expire, soonest first (Codex:
+  from ChatGPT's reset-credit list, read only while credits are held; Claude:
+  each grant's end, once per reset left). It can be shorter than `available`: a
+  credit without an expiry, or a failed list lookup, adds none. Claude's
+  `checked_at` is rewritten only when the credits change or every 15 minutes.
+  `null` before the first lookup, when the account reports none (Claude: not
+  eligible), and for other providers.
 - `observed_at`: time of the latest usage snapshot, else `null`.
 - `next_pick`: the credential the strategy would choose for a new conversation
   within its provider. Rotating strategies (`round-robin`) mark none.
@@ -190,21 +196,31 @@ appear without Codex traffic. Returns the `GET /usage/windows` shape, plus
 
 ## POST /usage/reset-credit
 
-Spends one of a Codex account's rate-limit reset credits (ChatGPT's
-`POST /backend-api/wham/rate-limit-reset-credits/consume`, as Codex's `/usage`
-panel does). Body `{"auth_index": "<auth_index>"}`; enabled Codex logins only.
-Each call sends a fresh `redeem_request_id`, so it spends at most one credit.
+Spends one of a Codex or Claude account's rate-limit reset credits. Body
+`{"auth_index": "<auth_index>"}`; enabled Codex and Claude OAuth logins only.
+
+- Codex: ChatGPT's `POST /backend-api/wham/rate-limit-reset-credits/consume`, as
+  Codex's `/usage` panel does.
+- Claude: a fresh usage lookup picks Claude's `next_grant_id`, then
+  `POST https://api.anthropic.com/api/organizations/<organization_uuid>/reset_rate_limits`
+  claims it (`{"program": "cedar_ember", "grant_id": …, "request_id": …}`), as
+  Claude Code's `/usage` does. Needs the login's `organization_uuid`.
+
+Each call sends a fresh request id, so it spends at most one credit.
 
 ```json
 {"code": "reset", "windows_reset": 2, "usage": { "...": "GET /usage/windows payload" }}
 ```
 
-`code`: `reset` (spent; reached limits cleared, cooldown lifted),
-`nothing_to_reset` (no limit reached, nothing spent), `no_credit` or
-`already_redeemed`. The credit count is then looked up again; a failed lookup
-adds `refresh_error`.
+`code`: `reset` (spent; limits cleared, cooldown lifted), `nothing_to_reset`
+(no limit to clear, nothing spent; Claude's `not_limited`), `no_credit` (Claude:
+no usable grant, or `ineligible`) or `already_redeemed` (Claude's
+`already_used`). `windows_reset` is Codex's count; Claude reports `0`. Usage and
+credits are then looked up again; a failed lookup adds `refresh_error`.
 
-- `400`: not an enabled Codex login. `404`: unknown index. `502`: ChatGPT failed.
+- `400`: not an enabled Codex or Claude login. `404`: unknown index.
+- `502`: the provider failed, or Claude answered `cooldown`, `unavailable`
+  (unconfirmed; check the limits before retrying), 429, 401 or 403.
 
 ## POST /usage/start-window
 

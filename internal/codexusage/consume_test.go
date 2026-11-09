@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/resetcredits"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -32,7 +33,7 @@ func TestConsumeResetCreditSendsAFreshRedeemIDAndReadsTheOutcome(t *testing.T) {
 	auth := &coreauth.Auth{ID: "a", Provider: "codex", Metadata: map[string]any{"access_token": "token-a", "account_id": "acct-1"}}
 	for range 2 {
 		got, errConsume := ConsumeResetCredit(context.Background(), &config.Config{}, auth)
-		if errConsume != nil || got.Code != ConsumeReset || got.WindowsReset != 2 {
+		if errConsume != nil || got.Code != resetcredits.Reset || got.WindowsReset != 2 {
 			t.Fatalf("result = %+v, %v", got, errConsume)
 		}
 	}

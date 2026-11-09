@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/resetcredits"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -32,12 +33,6 @@ const (
 	// maxBodyBytes bounds the usage document read; it is a few kilobytes.
 	maxBodyBytes = 1 << 20
 
-	// Auth metadata keys holding the last lookup, so it survives restarts.
-	availableKey  = "reset_credits_available"
-	applicableKey = "reset_credits_applicable"
-	checkedAtKey  = "reset_credits_checked_at"
-	expiriesKey   = "reset_credits_expiries"
-
 	// creditResetType and creditAvailable select the credits the usage document counts: unspent Codex rate-limit resets.
 	creditResetType = "codex_rate_limits"
 	creditAvailable = "available"
@@ -52,32 +47,6 @@ var usageURL = "https://chatgpt.com/backend-api/wham/usage"
 
 // creditsURL lists the account's reset credits one by one, with their expiry; Codex's /usage panel reads it.
 var creditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
-
-// ResetCredits are a Codex account's rate-limit reset credits as of its last lookup.
-type ResetCredits struct {
-	// Available is how many credits the account holds.
-	Available int
-	// Applicable is how many can be used now, i.e. against a limit the account has reached.
-	Applicable int
-	CheckedAt  time.Time
-	// Expiries are the held credits' expiry times, soonest first. A credit that never expires, or one
-	// whose list lookup failed, has none, so there may be fewer than Available.
-	Expiries []time.Time
-}
-
-// ResetCreditsOf returns the credential's last looked-up reset credits; false when never reported.
-func ResetCreditsOf(auth *coreauth.Auth) (ResetCredits, bool) {
-	if auth == nil || auth.Metadata == nil {
-		return ResetCredits{}, false
-	}
-	available, okAvailable := metadataInt(auth.Metadata[availableKey])
-	applicable, okApplicable := metadataInt(auth.Metadata[applicableKey])
-	checkedAt, errParse := time.Parse(time.RFC3339, metadataString(auth, checkedAtKey))
-	if !okAvailable || !okApplicable || errParse != nil {
-		return ResetCredits{}, false
-	}
-	return ResetCredits{Available: available, Applicable: applicable, CheckedAt: checkedAt, Expiries: metadataTimes(auth.Metadata[expiriesKey])}, true
-}
 
 // usageDocument is the part of the usage document the tracker reads.
 type usageDocument struct {
@@ -98,8 +67,8 @@ type creditsDocument struct {
 	} `json:"credits"`
 }
 
-// expiries returns the unspent Codex credits' expiry times as RFC 3339 strings, soonest first.
-func (doc creditsDocument) expiries() []string {
+// expiries returns the unspent Codex credits' expiry times, soonest first.
+func (doc creditsDocument) expiries() []time.Time {
 	var times []time.Time
 	for _, credit := range doc.Credits {
 		if credit.ResetType != creditResetType || credit.Status != creditAvailable {
@@ -110,11 +79,7 @@ func (doc creditsDocument) expiries() []string {
 		}
 	}
 	slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
-	out := make([]string, len(times))
-	for i, at := range times {
-		out[i] = at.Format(time.RFC3339)
-	}
-	return out
+	return times
 }
 
 type rateLimit struct {
@@ -261,26 +226,15 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	}
 	lookedUpAt := t.now()
 	t.manager.ObserveQuotaLookup(auth.ID, doc.quotaHeaders(), lookedUpAt)
-	checkedAt := lookedUpAt.UTC().Format(time.RFC3339)
-	expiries := t.lookUpExpiries(ctx, auth, doc)
+	var credits *resetcredits.Credits
+	if doc.ResetCredits != nil {
+		credits = &resetcredits.Credits{Available: doc.ResetCredits.Available, Applicable: doc.ResetCredits.Applicable, Expiries: t.lookUpExpiries(ctx, auth, doc)}
+	}
 	_, _, errModify := t.manager.Modify(ctx, auth.ID, 0, func(current *coreauth.Auth) error {
 		if current.Metadata == nil {
 			current.Metadata = map[string]any{}
 		}
-		current.Metadata[checkedAtKey] = checkedAt
-		if doc.ResetCredits == nil {
-			delete(current.Metadata, availableKey)
-			delete(current.Metadata, applicableKey)
-			delete(current.Metadata, expiriesKey)
-			return nil
-		}
-		current.Metadata[availableKey] = doc.ResetCredits.Available
-		current.Metadata[applicableKey] = doc.ResetCredits.Applicable
-		if len(expiries) == 0 {
-			delete(current.Metadata, expiriesKey)
-		} else {
-			current.Metadata[expiriesKey] = expiries
-		}
+		resetcredits.Store(current.Metadata, lookedUpAt, credits)
 		return nil
 	})
 	if errModify == nil {
@@ -294,7 +248,7 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 
 // lookUpExpiries reads the credit list when the usage document reports credits held. A failed list
 // lookup leaves the expiries unknown rather than failing the usage lookup.
-func (t *Tracker) lookUpExpiries(ctx context.Context, auth *coreauth.Auth, doc usageDocument) []string {
+func (t *Tracker) lookUpExpiries(ctx context.Context, auth *coreauth.Auth, doc usageDocument) []time.Time {
 	if doc.ResetCredits == nil || doc.ResetCredits.Available <= 0 {
 		return nil
 	}
@@ -387,40 +341,4 @@ func fetchDocument(ctx context.Context, cfg *config.Config, auth *coreauth.Auth,
 func metadataString(auth *coreauth.Auth, key string) string {
 	value, _ := auth.Metadata[key].(string)
 	return strings.TrimSpace(value)
-}
-
-// metadataTimes reads RFC 3339 times stored as []string, or as []any after a JSON round trip.
-func metadataTimes(value any) []time.Time {
-	var raw []string
-	switch v := value.(type) {
-	case []string:
-		raw = v
-	case []any:
-		for _, item := range v {
-			if text, ok := item.(string); ok {
-				raw = append(raw, text)
-			}
-		}
-	}
-	var out []time.Time
-	for _, text := range raw {
-		if at, errParse := time.Parse(time.RFC3339, text); errParse == nil {
-			out = append(out, at)
-		}
-	}
-	return out
-}
-
-// metadataInt reads a count stored as an int, or as a float64 after a JSON round trip.
-func metadataInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case float64:
-		return int(v), true
-	case json.Number:
-		n, errInt := v.Int64()
-		return int(n), errInt == nil
-	}
-	return 0, false
 }

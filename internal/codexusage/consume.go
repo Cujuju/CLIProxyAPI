@@ -18,19 +18,7 @@ import (
 // consumeURL redeems one reset credit; Codex's /usage panel calls the same endpoint.
 var consumeURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 
-// Consume outcome codes, as ChatGPT reports them.
-const (
-	// ConsumeReset means the credit was spent and the account's reached limits were cleared.
-	ConsumeReset = "reset"
-	// ConsumeNothingToReset means no limit was reached, so no credit was spent.
-	ConsumeNothingToReset = "nothing_to_reset"
-	// ConsumeNoCredit means the account holds no credit.
-	ConsumeNoCredit = "no_credit"
-	// ConsumeAlreadyRedeemed means this redeem request id was used before.
-	ConsumeAlreadyRedeemed = "already_redeemed"
-)
-
-// ConsumeResult is ChatGPT's answer to one redeem request.
+// ConsumeResult is ChatGPT's answer to one redeem request. ChatGPT's codes are the resetcredits outcome codes.
 type ConsumeResult struct {
 	Code         string `json:"code"`
 	WindowsReset int    `json:"windows_reset"`

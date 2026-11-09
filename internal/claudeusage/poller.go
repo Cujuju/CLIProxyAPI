@@ -11,6 +11,7 @@ import (
 
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
@@ -42,6 +43,7 @@ type Poller struct {
 	manager *coreauth.Manager
 	config  func() *config.Config
 	fetch   FetchFunc
+	redeem  RedeemFunc
 	now     func() time.Time
 	spacing time.Duration
 
@@ -51,7 +53,7 @@ type Poller struct {
 
 // NewPoller builds a poller over manager. cfg supplies the live config.
 func NewPoller(manager *coreauth.Manager, cfg func() *config.Config) *Poller {
-	return &Poller{manager: manager, config: cfg, fetch: fetchUsage, now: time.Now, spacing: requestSpacing, backoff: map[string]time.Time{}}
+	return &Poller{manager: manager, config: cfg, fetch: fetchUsage, redeem: redeemResetCredit, now: time.Now, spacing: requestSpacing, backoff: map[string]time.Time{}}
 }
 
 // Run refreshes stale credentials and wakes for quota updates, pending lookup deadlines, or periodic checks.
@@ -131,7 +133,7 @@ func (p *Poller) RefreshAll(ctx context.Context) map[string]error {
 // It is not a lookup failure, so it sets no backoff.
 var ErrTokenExpired = errors.New("access token expired; waiting for refresh")
 
-// Refresh looks up one credential now and records the snapshot.
+// Refresh looks up one credential now and records the snapshot and reset credits.
 func (p *Poller) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	if !Eligible(auth) {
 		return fmt.Errorf("credential %s is not an enabled Claude OAuth credential", auth.ID)
@@ -148,6 +150,7 @@ func (p *Poller) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 		headers, errConvert := HeadersFromUsage(raw)
 		if errConvert == nil {
 			p.manager.ObserveQuotaLookup(auth.ID, headers, lookedUpAt)
+			p.storeCredits(ctx, auth, parseCredits(raw, lookedUpAt).credits, lookedUpAt)
 			p.setBackoff(auth.ID, time.Time{})
 			return nil
 		}
@@ -266,5 +269,10 @@ func (p *Poller) wait(ctx context.Context) {
 }
 
 func fetchUsage(ctx context.Context, cfg *config.Config, auth *coreauth.Auth) (json.RawMessage, error) {
-	return claudeauth.NewClaudeAuthWithProxyURL(cfg, auth.ProxyURL).FetchOAuthUsage(ctx, accessToken(auth))
+	return claudeauth.NewClaudeAuthWithProxyURL(cfg, auth.ProxyURL).FetchOAuthUsage(ctx, accessToken(auth), claudeCodeUserAgent(cfg, auth))
+}
+
+// claudeCodeUserAgent is the credential's Claude Code device profile User-Agent, the one its model calls send.
+func claudeCodeUserAgent(cfg *config.Config, auth *coreauth.Auth) string {
+	return helps.ResolveClaudeDeviceProfile(auth, "", nil, cfg).UserAgent
 }

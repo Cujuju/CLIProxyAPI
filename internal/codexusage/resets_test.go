@@ -2,12 +2,12 @@ package codexusage
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/resetcredits"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -61,13 +61,13 @@ func codexOAuth(id string) *coreauth.Auth {
 	return &coreauth.Auth{ID: id, Provider: "codex", Attributes: map[string]string{"runtime_only": "true"}, Metadata: map[string]any{"access_token": "token-" + id}}
 }
 
-func (f *fixture) credits(t *testing.T, id string) (ResetCredits, bool) {
+func (f *fixture) credits(t *testing.T, id string) (resetcredits.Credits, bool) {
 	t.Helper()
 	stored, ok := f.manager.GetByID(id)
 	if !ok {
 		t.Fatalf("auth %s missing", id)
 	}
-	return ResetCreditsOf(stored)
+	return resetcredits.Of(stored)
 }
 
 func TestRefreshStaleLooksUpOnlyStaleCodexLogins(t *testing.T) {
@@ -102,7 +102,7 @@ func TestRefreshStaleLooksUpOnlyStaleCodexLogins(t *testing.T) {
 func TestRefreshStaleLooksUpOnBootDespiteASavedLookup(t *testing.T) {
 	saved := codexOAuth("a")
 	// A lookup saved by the previous run a minute before the fixture's clock; its windows were in memory and are gone.
-	saved.Metadata[checkedAtKey] = "2026-10-26T11:59:00Z"
+	resetcredits.Store(saved.Metadata, time.Date(2026, 10, 26, 11, 59, 0, 0, time.UTC), nil)
 	f := newFixture(t, saved)
 	f.tracker.RefreshStale(context.Background())
 	if f.calls["a"] != 1 {
@@ -181,17 +181,6 @@ func TestRefreshAllIgnoresStalenessAndSkipsIneligible(t *testing.T) {
 	}
 }
 
-func TestResetCreditsOfReadsCountsAfterAJSONRoundTrip(t *testing.T) {
-	raw, _ := json.Marshal(map[string]any{availableKey: 2, applicableKey: 1, checkedAtKey: "2026-10-26T12:00:00Z"})
-	var metadata map[string]any
-	if errUnmarshal := json.Unmarshal(raw, &metadata); errUnmarshal != nil {
-		t.Fatal(errUnmarshal)
-	}
-	got, ok := ResetCreditsOf(&coreauth.Auth{Metadata: metadata})
-	if !ok || got.Available != 2 || got.Applicable != 1 {
-		t.Fatalf("credits = %+v, %v", got, ok)
-	}
-}
 
 // creditList is a reset-credit list in ChatGPT's shape: two unspent credits out of order, plus ones the
 // usage count leaves out (spent, another reset type, no expiry).
@@ -241,17 +230,5 @@ func TestRefreshKeepsCountsWhenTheCreditListFails(t *testing.T) {
 	got, ok := f.credits(t, "a")
 	if !ok || got.Available != 1 || len(got.Expiries) != 0 {
 		t.Fatalf("credits = %+v, %v; want counts kept and expiries unknown", got, ok)
-	}
-}
-
-func TestResetCreditsOfReadsExpiriesAfterAJSONRoundTrip(t *testing.T) {
-	raw, _ := json.Marshal(map[string]any{availableKey: 1, applicableKey: 0, checkedAtKey: "2026-10-26T12:00:00Z", expiriesKey: []string{"2026-11-15T08:30:00Z"}})
-	var metadata map[string]any
-	if errUnmarshal := json.Unmarshal(raw, &metadata); errUnmarshal != nil {
-		t.Fatal(errUnmarshal)
-	}
-	got, ok := ResetCreditsOf(&coreauth.Auth{Metadata: metadata})
-	if !ok || len(got.Expiries) != 1 || !got.Expiries[0].Equal(time.Date(2026, 11, 15, 8, 30, 0, 0, time.UTC)) {
-		t.Fatalf("credits = %+v, %v", got, ok)
 	}
 }
