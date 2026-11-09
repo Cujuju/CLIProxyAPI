@@ -21,7 +21,7 @@ const (
 
 // Redeem outcome codes, as POST /usage/reset-credit reports them.
 const (
-	// Reset means a credit was spent and the account's limits were cleared.
+	// Reset means a credit was spent; what it cleared shows in the next usage lookup.
 	Reset = "reset"
 	// NothingToReset means no limit needed clearing, so no credit was spent.
 	NothingToReset = "nothing_to_reset"

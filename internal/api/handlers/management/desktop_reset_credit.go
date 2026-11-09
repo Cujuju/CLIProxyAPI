@@ -9,11 +9,11 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/claudeusage"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexusage"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/resetcredits"
 )
 
-// UseResetCredit spends one of a Codex or Claude account's rate-limit reset credits. On "reset" the
-// credential's cooldown is lifted so routing picks it again; its usage and credits are looked up anew.
+// UseResetCredit spends one of a Codex or Claude account's rate-limit reset credits, then looks up its
+// usage and credits. Which limits a reset clears varies by grant, so nothing is cleared locally: the
+// lookup lifts a cooldown only when its windows show room.
 func (h *Handler) UseResetCredit(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
@@ -54,12 +54,6 @@ func (h *Handler) UseResetCredit(c *gin.Context) {
 	if errConsume != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": errConsume.Error()})
 		return
-	}
-	if code == resetcredits.Reset {
-		if _, _, errReset := h.authManager.ResetQuota(ctx, auth.ID); errReset != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "reset applied, but the cooldown was not lifted: " + errReset.Error()})
-			return
-		}
 	}
 	payload := gin.H{"code": code, "windows_reset": windowsReset}
 	if errRefresh := refresh(); errRefresh != nil {

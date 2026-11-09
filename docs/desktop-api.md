@@ -212,11 +212,15 @@ Each call sends a fresh request id, so it spends at most one credit.
 {"code": "reset", "windows_reset": 2, "usage": { "...": "GET /usage/windows payload" }}
 ```
 
-`code`: `reset` (spent; limits cleared, cooldown lifted), `nothing_to_reset`
+`code`: `reset` (spent), `nothing_to_reset`
 (no limit to clear, nothing spent; Claude's `not_limited`), `no_credit` (Claude:
 no usable grant, or `ineligible`) or `already_redeemed` (Claude's
 `already_used`). `windows_reset` is Codex's count; Claude reports `0`. Usage and
-credits are then looked up again; a failed lookup adds `refresh_error`.
+credits are then looked up again; a failed lookup adds `refresh_error`. Which
+limits a reset clears depends on the grant (a Claude grant lists them in
+`clears`), so the proxy clears nothing itself: that lookup lifts a cooldown only
+when its windows show room, as any lookup does. After a failed lookup the
+cooldown stays until a later lookup or its own expiry.
 
 - `400`: not an enabled Codex or Claude login. `404`: unknown index.
 - `502`: the provider failed, or Claude answered `cooldown`, `unavailable`
