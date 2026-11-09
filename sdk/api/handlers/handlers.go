@@ -630,8 +630,14 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		newCtx = logging.WithEndpoint(newCtx, endpoint)
 	}
 	if c != nil && c.Request != nil {
+		purpose := ""
+		if c.Request.Header.Get("X-CPA-Purpose") == "canary" {
+			purpose = "canary"
+		}
+		c.Request.Header.Del("X-CPA-Purpose")
 		sessionID, parentSessionID := extractSessionIDsFromRequest(c.Request)
 		newCtx = logging.WithClientRequestMetadata(newCtx, logging.ClientRequestMetadata{
+			Purpose:          purpose,
 			ClientIP:         requestClientIP(c.Request),
 			ResolvedClientIP: strings.TrimSpace(c.ClientIP()),
 			XForwardedFor:    strings.TrimSpace(strings.Join(c.Request.Header.Values("X-Forwarded-For"), ", ")),

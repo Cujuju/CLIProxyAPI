@@ -110,3 +110,39 @@ func TestDesktopEventAttemptObservations(t *testing.T) {
 		t.Fatalf("failure status = %d", event.StatusCode)
 	}
 }
+
+func TestDesktopEventReasoningTokensPresence(t *testing.T) {
+	for _, tc := range []struct {
+		reported bool
+		tokens   int64
+	}{{false, 0}, {true, 0}, {true, 42}} {
+		data, err := json.Marshal(desktopEventFromRecord(coreusage.Record{Detail: coreusage.Detail{ReasoningTokens: tc.tokens, ReasoningTokensReported: tc.reported}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		value, exists := fields["reasoning_tokens"]
+		if exists != tc.reported {
+			t.Fatalf("reported=%v: %s", tc.reported, data)
+		}
+		if exists {
+			var got int64
+			if err := json.Unmarshal(value, &got); err != nil || got != tc.tokens {
+				t.Fatalf("reasoning_tokens=%s", value)
+			}
+		}
+		if _, exists := fields["request_settings"]; exists {
+			t.Fatalf("unknown settings included: %s", data)
+		}
+	}
+}
+
+func TestDesktopEventCanaryPurpose(t *testing.T) {
+	event := desktopEventFromRecord(coreusage.Record{Purpose: "canary"})
+	if event.Purpose != "canary" {
+		t.Fatalf("purpose=%q", event.Purpose)
+	}
+}

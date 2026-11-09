@@ -49,6 +49,7 @@ type UsageReporter struct {
 	parentSessionID      string
 	source               string
 	reasoning            string
+	requestSettings      *usage.RequestSettings
 	serviceTier          string
 	effectiveServiceTier string
 	generate             bool
@@ -388,6 +389,7 @@ func (r *UsageReporter) SetTranslatedRequestMetadata(payload []byte, format stri
 	if r == nil {
 		return
 	}
+	r.requestSettings = extractRequestSettings(payload, format)
 	r.reasoning = thinking.ExtractTranslatedReasoningEffort(payload, format)
 	r.effectiveServiceTier = extractEffectiveServiceTier(payload)
 }
@@ -736,6 +738,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		AccessTokenSHA256:       r.accessTokenFingerprint(),
 		AuthType:                r.authType,
 		ReasoningEffort:         r.reasoning,
+		RequestSettings:         r.requestSettings,
 		ServiceTier:             r.serviceTier,
 		EffectiveServiceTier:    r.effectiveServiceTier,
 		ResponseServiceTier:     strings.TrimSpace(detail.ResponseServiceTier),
@@ -977,8 +980,12 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 		return
 	}
 	responseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
-	if responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+	if responseServiceTier == "" || hasUsageDetail(detail) {
 		preservedTier := b.detail.ResponseServiceTier
+		if !detail.ReasoningTokensReported && b.detail.ReasoningTokensReported {
+			detail.ReasoningTokens = b.detail.ReasoningTokens
+			detail.ReasoningTokensReported = true
+		}
 		b.detail = detail
 		if b.detail.ResponseServiceTier == "" {
 			b.detail.ResponseServiceTier = preservedTier
@@ -1196,6 +1203,7 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 	}
 	if reasoning.Exists() {
 		detail.ReasoningTokens = reasoning.Int()
+		detail.ReasoningTokensReported = true
 	}
 	if hasOpenAIStyleUsageBucketFields(usageNode) {
 		if inputNode.Exists() && outputNode.Exists() {
@@ -1303,12 +1311,13 @@ func parseClaudeUsageNode(usageNode gjson.Result) usage.Detail {
 		nonReasoningOutput = 0
 	}
 	detail := usage.Detail{
-		InputTokens:         usageNode.Get("input_tokens").Int(),
-		OutputTokens:        rawOutputTokens,
-		ReasoningTokens:     reasoningTokens,
-		CachedTokens:        cacheReadTokens,
-		CacheReadTokens:     cacheReadTokens,
-		CacheCreationTokens: cacheCreationTokens,
+		InputTokens:             usageNode.Get("input_tokens").Int(),
+		OutputTokens:            rawOutputTokens,
+		ReasoningTokens:         reasoningTokens,
+		ReasoningTokensReported: reasoningNode.Exists(),
+		CachedTokens:            cacheReadTokens,
+		CacheReadTokens:         cacheReadTokens,
+		CacheCreationTokens:     cacheCreationTokens,
 	}
 	// Anthropic reports the speed a response was served and billed at in
 	// usage.speed ("fast" or "standard"): fast mode costs more, and a
@@ -1339,12 +1348,13 @@ func parseGeminiFamilyUsageDetail(node gjson.Result) usage.Detail {
 	toolUseTokens := firstExistingUsageNode(node, "toolUsePromptTokenCount", "tool_use_prompt_token_count").Int()
 	inputTokens, okInput := safeUsageTokenSum(node.Get("promptTokenCount").Int(), toolUseTokens)
 	detail := usage.Detail{
-		InputTokens:     inputTokens,
-		OutputTokens:    node.Get("candidatesTokenCount").Int(),
-		ReasoningTokens: node.Get("thoughtsTokenCount").Int(),
-		TotalTokens:     node.Get("totalTokenCount").Int(),
-		CachedTokens:    cachedTokens,
-		CacheReadTokens: cachedTokens,
+		InputTokens:             inputTokens,
+		OutputTokens:            node.Get("candidatesTokenCount").Int(),
+		ReasoningTokens:         node.Get("thoughtsTokenCount").Int(),
+		ReasoningTokensReported: node.Get("thoughtsTokenCount").Exists(),
+		TotalTokens:             node.Get("totalTokenCount").Int(),
+		CachedTokens:            cachedTokens,
+		CacheReadTokens:         cachedTokens,
 	}
 	if !okInput {
 		detail.TokenBreakdown = invalidUsageTokenBreakdown(detail.TotalTokens)
@@ -1378,13 +1388,14 @@ func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 		toolUseTokens,
 	)
 	detail := usage.Detail{
-		InputTokens:         inputTokens,
-		OutputTokens:        firstExistingUsageNode(node, "output_tokens", "completion_tokens", "total_output_tokens").Int(),
-		ReasoningTokens:     firstExistingUsageNode(node, "reasoning_tokens", "thoughtsTokenCount", "total_thought_tokens").Int(),
-		TotalTokens:         firstExistingUsageNode(node, "total_tokens", "totalTokenCount").Int(),
-		CachedTokens:        firstExistingUsageNode(node, "cached_tokens", "cachedContentTokenCount", "total_cached_tokens").Int(),
-		CacheReadTokens:     cacheRead.Int(),
-		CacheCreationTokens: firstExistingUsageNode(node, "cache_creation_tokens", "cacheCreationTokens", "cache_write_tokens", "cacheWriteTokens").Int(),
+		InputTokens:             inputTokens,
+		OutputTokens:            firstExistingUsageNode(node, "output_tokens", "completion_tokens", "total_output_tokens").Int(),
+		ReasoningTokens:         firstExistingUsageNode(node, "reasoning_tokens", "thoughtsTokenCount", "total_thought_tokens").Int(),
+		ReasoningTokensReported: firstExistingUsageNode(node, "reasoning_tokens", "thoughtsTokenCount", "total_thought_tokens").Exists(),
+		TotalTokens:             firstExistingUsageNode(node, "total_tokens", "totalTokenCount").Int(),
+		CachedTokens:            firstExistingUsageNode(node, "cached_tokens", "cachedContentTokenCount", "total_cached_tokens").Int(),
+		CacheReadTokens:         cacheRead.Int(),
+		CacheCreationTokens:     firstExistingUsageNode(node, "cache_creation_tokens", "cacheCreationTokens", "cache_write_tokens", "cacheWriteTokens").Int(),
 	}
 	if !okInput {
 		detail.TokenBreakdown = invalidUsageTokenBreakdown(detail.TotalTokens)
@@ -1414,7 +1425,7 @@ func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 }
 
 func hasUsageDetail(detail usage.Detail) bool {
-	return hasNonZeroTokenUsage(detail)
+	return detail.ReasoningTokensReported || hasNonZeroTokenUsage(detail)
 }
 
 func ParseInteractionsUsage(data []byte) usage.Detail {
@@ -1489,7 +1500,7 @@ func ParseGeminiStreamUsage(line []byte) (usage.Detail, bool) {
 		return usage.Detail{}, false
 	}
 	detail := parseGeminiFamilyUsageDetail(node)
-	if !hasNonZeroTokenUsage(detail) {
+	if !hasUsageDetail(detail) {
 		return usage.Detail{}, false
 	}
 	return detail, true

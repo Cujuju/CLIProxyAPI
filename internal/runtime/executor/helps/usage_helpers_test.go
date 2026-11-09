@@ -260,6 +260,30 @@ func TestStreamUsageBufferKeepsLastUsage(t *testing.T) {
 	}
 }
 
+func TestStreamUsageBufferPreservesReasoningAcrossChunks(t *testing.T) {
+	for _, reasoningTokens := range []int64{0, 5} {
+		t.Run(fmt.Sprintf("reasoning_tokens_%d", reasoningTokens), func(t *testing.T) {
+			var buffer StreamUsageBuffer
+			buffer.Observe(usage.Detail{
+				InputTokens:             10,
+				OutputTokens:            6,
+				TotalTokens:             16,
+				ReasoningTokens:         reasoningTokens,
+				ReasoningTokensReported: true,
+			}, true)
+			buffer.Observe(usage.Detail{InputTokens: 10, OutputTokens: 8, TotalTokens: 18}, true)
+
+			detail, ok := buffer.Detail()
+			if !ok || !detail.ReasoningTokensReported || detail.ReasoningTokens != reasoningTokens {
+				t.Fatalf("detail = %+v, ok = %v, want reported reasoning tokens %d", detail, ok, reasoningTokens)
+			}
+			if detail.InputTokens != 10 || detail.OutputTokens != 8 || detail.TotalTokens != 18 {
+				t.Fatalf("detail = %+v, want latest usage", detail)
+			}
+		})
+	}
+}
+
 func TestStreamUsageBufferPreservesTierAcrossChunks(t *testing.T) {
 	t.Parallel()
 
@@ -501,7 +525,7 @@ func TestParseGeminiUsageIncludesToolUsePromptTokens(t *testing.T) {
 	}
 }
 
-func TestParseGeminiStreamUsageSkipsZeroPlaceholder(t *testing.T) {
+func TestParseGeminiStreamUsagePreservesReportedZero(t *testing.T) {
 	lines := [][]byte{
 		[]byte(`data: {"usageMetadata":{"promptTokenCount":0,"candidatesTokenCount":0,"thoughtsTokenCount":0,"totalTokenCount":0}}`),
 		[]byte(`data: {"usageMetadata":{"promptTokenCount":17984,"candidatesTokenCount":2668,"thoughtsTokenCount":1028,"totalTokenCount":21680}}`),
@@ -515,10 +539,13 @@ func TestParseGeminiStreamUsageSkipsZeroPlaceholder(t *testing.T) {
 		}
 	}
 
-	if len(accepted) != 1 {
-		t.Fatalf("accepted usage count = %d, want 1", len(accepted))
+	if len(accepted) != len(lines) {
+		t.Fatalf("accepted usage count = %d, want %d", len(accepted), len(lines))
 	}
-	detail := accepted[0]
+	if !accepted[0].ReasoningTokensReported || accepted[0].ReasoningTokens != 0 {
+		t.Fatalf("reported zero lost: %+v", accepted[0])
+	}
+	detail := accepted[len(accepted)-1]
 	if detail.InputTokens != 17984 || detail.OutputTokens != 2668 || detail.ReasoningTokens != 1028 || detail.TotalTokens != 21680 {
 		t.Fatalf("accepted usage detail = %+v", detail)
 	}

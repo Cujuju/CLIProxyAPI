@@ -275,6 +275,16 @@ upstream attempt, successful or failed:
 - `reasoning_effort`: optional effective effort extracted from the final translated
   and configured upstream payload (including a numeric thinking budget where applicable).
   Omitted means unknown, not a default effort. Do not backfill it from current settings.
+- `reasoning_tokens`: upstream reasoning/thinking token count, included only when reported,
+  including zero. Claude uses `output_tokens_details.thinking_tokens`, OpenAI/Codex
+  use reasoning token details, and Gemini uses `thoughtsTokenCount`.
+- `request_settings`: optional object observed from the final translated and configured
+  upstream request. Fields are omitted when unknown: `thinking` (`adaptive`, `enabled`,
+  or `disabled`), `thinking_budget` (integer token budget), `max_tokens` (integer output
+  limit from `max_tokens`, `max_output_tokens`, or `max_completion_tokens`), and `betas`
+  (sorted, de-duplicated strings from the actual upstream `anthropic-beta` header).
+  OpenAI/Codex report `thinking: "disabled"` only for reasoning effort `none`.
+  The object is omitted when nothing is known; effort remains in `reasoning_effort`.
 - `session_kind`: optional `root`, `subagent`, `fork`, or `compaction`, with precedence compaction > fork > subagent > root. Root requires a known session and no parent; missing kind means unknown.
 - `parent_session_id`: optional parent conversation for a subagent execution.
 - `trace_id`: optional inbound request trace identifier, shared by its execution attempts.
@@ -284,7 +294,9 @@ upstream attempt, successful or failed:
 - `transport_fallback_reason`: optional stable metadata-only code for an observed
   fallback or failed upgrade (for example `websocket_upgrade_426`); never raw error text.
 - `purpose: "window-start"` marks requests sent by `POST /usage/start-window`;
-  absent for client traffic.
+  `purpose: "canary"` marks client requests carrying `X-CPA-Purpose: canary`.
+  Other header values are ignored. The header is stripped before forwarding upstream.
+  Purpose is otherwise absent for client traffic.
 - `status_code` is the upstream HTTP status observed for an attempt, successful or failed; omitted when unknown. Failed attempts add a sanitized `error` summary. Attempts of
   one credential selection share `selection_id`.
 - `session_id`: the client conversation, as session affinity keys it (`claude:<session uuid>`,

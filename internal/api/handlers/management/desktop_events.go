@@ -27,32 +27,34 @@ const (
 
 // desktopRequestEvent is one upstream attempt as the desktop activity view shows it.
 type desktopRequestEvent struct {
-	At                      time.Time `json:"at"`
-	RequestID               string    `json:"request_id"`
-	UpstreamID              string    `json:"upstream_id,omitempty"`
-	SelectionID             string    `json:"selection_id,omitempty"`
-	TraceID                 string    `json:"trace_id,omitempty"`
-	Provider                string    `json:"provider"`
-	Model                   string    `json:"model"`
-	Alias                   string    `json:"alias,omitempty"`
-	ReasoningEffort         string    `json:"reasoning_effort,omitempty"`
-	DownstreamTransport     string    `json:"downstream_transport,omitempty"`
-	UpstreamTransport       string    `json:"upstream_transport,omitempty"`
-	TransportFallbackReason string    `json:"transport_fallback_reason,omitempty"`
-	AuthID                  string    `json:"auth_id,omitempty"`
-	AuthIndex               string    `json:"auth_index,omitempty"`
-	Stream                  bool      `json:"stream"`
-	Failed                  bool      `json:"failed"`
-	StatusCode              int       `json:"status_code,omitempty"`
-	Error                   string    `json:"error,omitempty"`
-	LatencyMs               int64     `json:"latency_ms"`
-	TTFTMs                  int64     `json:"ttft_ms,omitempty"`
-	InputTokens             int64     `json:"input_tokens"`
-	Output                  int64     `json:"output_tokens"`
+	At                      time.Time                  `json:"at"`
+	RequestID               string                     `json:"request_id"`
+	UpstreamID              string                     `json:"upstream_id,omitempty"`
+	SelectionID             string                     `json:"selection_id,omitempty"`
+	TraceID                 string                     `json:"trace_id,omitempty"`
+	Provider                string                     `json:"provider"`
+	Model                   string                     `json:"model"`
+	Alias                   string                     `json:"alias,omitempty"`
+	ReasoningEffort         string                     `json:"reasoning_effort,omitempty"`
+	ReasoningTokens         *int64                     `json:"reasoning_tokens,omitempty"`
+	RequestSettings         *coreusage.RequestSettings `json:"request_settings,omitempty"`
+	DownstreamTransport     string                     `json:"downstream_transport,omitempty"`
+	UpstreamTransport       string                     `json:"upstream_transport,omitempty"`
+	TransportFallbackReason string                     `json:"transport_fallback_reason,omitempty"`
+	AuthID                  string                     `json:"auth_id,omitempty"`
+	AuthIndex               string                     `json:"auth_index,omitempty"`
+	Stream                  bool                       `json:"stream"`
+	Failed                  bool                       `json:"failed"`
+	StatusCode              int                        `json:"status_code,omitempty"`
+	Error                   string                     `json:"error,omitempty"`
+	LatencyMs               int64                      `json:"latency_ms"`
+	TTFTMs                  int64                      `json:"ttft_ms,omitempty"`
+	InputTokens             int64                      `json:"input_tokens"`
+	Output                  int64                      `json:"output_tokens"`
 	// Cached counts cache reads; CacheWrite counts tokens written to the prompt cache.
 	Cached     int64 `json:"cached_tokens"`
 	CacheWrite int64 `json:"cache_creation_tokens"`
-	// Purpose is "window-start" for requests that start a usage window; empty for client traffic.
+	// Purpose identifies window starters and client canary probes.
 	Purpose string `json:"purpose,omitempty"`
 	// SessionID is the client conversation (e.g. "claude:<session uuid>"); empty when the client sends none.
 	SessionID       string `json:"session_id,omitempty"`
@@ -116,7 +118,11 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 		Stream: record.Stream, Failed: record.Failed, StatusCode: record.StatusCode,
 		LatencyMs: record.Latency.Milliseconds(), TTFTMs: record.TTFT.Milliseconds(),
 		InputTokens: record.Detail.InputTokens, Output: record.Detail.OutputTokens, Cached: record.Detail.CachedTokens,
-		CacheWrite: record.Detail.CacheCreationTokens,
+		CacheWrite:      record.Detail.CacheCreationTokens,
+		RequestSettings: record.RequestSettings, Purpose: record.Purpose,
+	}
+	if record.Detail.ReasoningTokensReported {
+		event.ReasoningTokens = &record.Detail.ReasoningTokens
 	}
 	if record.Fail.StatusCode != 0 {
 		event.StatusCode = record.Fail.StatusCode

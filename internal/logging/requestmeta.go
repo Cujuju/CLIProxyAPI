@@ -20,6 +20,7 @@ type ClientRequestMetadata struct {
 	ResolvedClientIP string
 	XForwardedFor    string
 	UserAgent        string
+	Purpose          string
 	SessionID        string
 	ParentSessionID  string
 	SessionKind      string

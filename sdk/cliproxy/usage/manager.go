@@ -65,6 +65,8 @@ type Record struct {
 	Source            string
 	// ReasoningEffort stores the translated upstream thinking level for request event logs.
 	ReasoningEffort string
+	RequestSettings *RequestSettings
+	Purpose         string
 	// ServiceTier stores the client-requested service tier.
 	ServiceTier string
 	// EffectiveServiceTier stores the tier in the final outbound request after
@@ -109,15 +111,16 @@ type Failure struct {
 
 // Detail holds the token usage breakdown.
 type Detail struct {
-	InputTokens         int64
-	OutputTokens        int64
-	ReasoningTokens     int64
-	CachedTokens        int64
-	CacheReadTokens     int64
-	CacheCreationTokens int64
-	TotalTokens         int64
-	TokenBreakdown      TokenBreakdown
-	ResponseServiceTier string
+	InputTokens             int64
+	OutputTokens            int64
+	ReasoningTokens         int64
+	ReasoningTokensReported bool
+	CachedTokens            int64
+	CacheReadTokens         int64
+	CacheCreationTokens     int64
+	TotalTokens             int64
+	TokenBreakdown          TokenBreakdown
+	ResponseServiceTier     string
 }
 
 type requestedModelAliasContextKey struct{}
@@ -747,6 +750,7 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 			record.AccessProvider = provider
 		}
 	}
+	record.Purpose = internallogging.GetClientRequestMetadata(ctx).Purpose
 	if strings.TrimSpace(record.UserAgent) == "" {
 		record.UserAgent = internallogging.GetClientRequestMetadata(ctx).UserAgent
 	}
