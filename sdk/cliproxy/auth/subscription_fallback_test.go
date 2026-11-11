@@ -130,7 +130,7 @@ func TestSubscriptionPreferenceIgnoresZeroWeightOAuth(t *testing.T) {
 		{ID: "subscription", Provider: "test", Attributes: map[string]string{"auth_kind": "oauth", "weight": "0"}},
 		{ID: "key", Provider: "test", Attributes: map[string]string{"api_key": "test-key"}},
 	}
-	_, candidates, err := manager.availableAuthsForSelector(&WeightedRoundRobinSelector{}, auths, "test", "", time.Now(), false)
+	_, candidates, err := manager.availableAuthsForSelector(context.Background(), &WeightedRoundRobinSelector{}, auths, "test", "", time.Now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

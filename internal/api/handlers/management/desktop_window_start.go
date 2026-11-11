@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/claudeusage"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/codexusage"
@@ -17,7 +18,6 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/sjson"
 )
 
 const (
@@ -74,7 +74,7 @@ func (h *Handler) StartUsageWindow(c *gin.Context) {
 		return
 	}
 	model := strings.TrimSpace(body.Model)
-	payload, errSet := sjson.SetBytes(payload, "model", model)
+	payload, errSet := ojson.SetBytes(payload, "model", model)
 	if errSet != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": errSet.Error()})
 		return

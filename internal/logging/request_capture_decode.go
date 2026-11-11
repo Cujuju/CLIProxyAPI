@@ -3,11 +3,11 @@ package logging
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/base64"
 	"io"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/klauspost/compress/zstd"
 )
 

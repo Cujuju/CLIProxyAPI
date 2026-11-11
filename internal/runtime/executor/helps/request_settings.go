@@ -5,21 +5,21 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
-	"github.com/tidwall/gjson"
 )
 
 func extractRequestSettings(payload []byte, format string) *usage.RequestSettings {
 	settings := &usage.RequestSettings{}
-	node := gjson.ParseBytes(payload)
-	var maxTokens gjson.Result
+	node := ojson.ParseBytes(payload)
+	var maxTokens ojson.Result
 	switch format {
 	case "claude":
 		switch mode := node.Get("thinking.type").String(); mode {
 		case "adaptive", "enabled", "disabled":
 			settings.Thinking = mode
 		}
-		if budget := node.Get("thinking.budget_tokens"); budget.Type == gjson.Number {
+		if budget := node.Get("thinking.budget_tokens"); budget.Type == ojson.Number {
 			value := budget.Int()
 			settings.ThinkingBudget = &value
 		}
@@ -30,7 +30,7 @@ func extractRequestSettings(payload []byte, format string) *usage.RequestSetting
 			settings.Thinking = "disabled"
 		}
 	}
-	if maxTokens.Type == gjson.Number {
+	if maxTokens.Type == ojson.Number {
 		value := maxTokens.Int()
 		settings.MaxTokens = &value
 	}

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
-	"github.com/tidwall/gjson"
 )
 
 // Usage-limit responses (upstream router-for-me#6646). When every eligible credential is out of
@@ -191,10 +191,10 @@ func isExplicitQuotaErrorBody(body string) bool {
 	if start := strings.IndexByte(body, '{'); start > 0 {
 		body = body[start:]
 	}
-	if !gjson.Valid(body) {
+	if !ojson.Valid(body) {
 		return false
 	}
-	parsed := gjson.Parse(body)
+	parsed := ojson.Parse(body)
 	for _, path := range []string{"error.type", "error.code", "type", "code"} {
 		if _, ok := explicitQuotaErrorCodes[strings.ToLower(strings.TrimSpace(parsed.Get(path).String()))]; ok {
 			return true

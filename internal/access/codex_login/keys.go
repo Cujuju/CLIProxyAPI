@@ -3,7 +3,6 @@ package codexlogin
 import (
 	"context"
 	"crypto/rsa"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -11,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	log "github.com/sirupsen/logrus"
 )
 

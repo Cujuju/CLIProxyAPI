@@ -8,7 +8,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
-	"github.com/tidwall/gjson"
 )
 
 func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
@@ -47,6 +46,10 @@ func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
 			if entry == nil {
 				t.Fatalf("missing synthesized model %q", modelID)
 			}
+			// The synthesized model inherits multi_agent_version from the
+			// catalog's default template, which currently carries "v2";
+			// runtime code preserves it when the opt-in is disabled and
+			// rewrites it to "v2" when enabled.
 			value, exists := entry["multi_agent_version"]
 			if tt.enabled {
 				if !exists || value != "v2" {
@@ -54,10 +57,8 @@ func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
 				}
 				return
 			}
-			// Disabled keeps the default template's (gpt-5.5) version.
-			want := gjson.GetBytes(registry.GetCodexClientModelsJSON(), `models.#(slug=="gpt-5.5").multi_agent_version`).Value()
-			if !exists || value != want {
-				t.Fatalf("multi_agent_version = %#v, want preserved %#v", value, want)
+			if !exists || value != "v2" {
+				t.Fatalf("multi_agent_version = %#v, want preserved template value v2", value)
 			}
 		})
 	}
