@@ -986,6 +986,14 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 			detail.ReasoningTokens = b.detail.ReasoningTokens
 			detail.ReasoningTokensReported = true
 		}
+		if !detail.CacheCreation1hReported && b.detail.CacheCreation1hReported {
+			detail.CacheCreation1hTokens = b.detail.CacheCreation1hTokens
+			detail.CacheCreation1hReported = true
+		}
+		if !detail.CacheCreationLongReported && b.detail.CacheCreationLongReported {
+			detail.CacheCreationLongTokens = b.detail.CacheCreationLongTokens
+			detail.CacheCreationLongReported = true
+		}
 		b.detail = detail
 		if b.detail.ResponseServiceTier == "" {
 			b.detail.ResponseServiceTier = preservedTier
@@ -1193,6 +1201,12 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 	if cacheCreation.Exists() {
 		detail.CacheCreationTokens = cacheCreation.Int()
 	}
+	longWrite := firstExistingUsageNode(usageNode,
+		"input_tokens_details.cache_write_tokens_details.ttl_12h_tokens",
+		"prompt_tokens_details.cache_write_tokens_details.ttl_12h_tokens",
+	)
+	detail.CacheCreationLongTokens = longWrite.Int()
+	detail.CacheCreationLongReported = longWrite.Exists()
 	reasoning := usageNode.Get("completion_tokens_details.reasoning_tokens")
 	if !reasoning.Exists() {
 		reasoning = usageNode.Get("output_tokens_details.reasoning_tokens")
@@ -1319,6 +1333,9 @@ func parseClaudeUsageNode(usageNode gjson.Result) usage.Detail {
 		CacheReadTokens:         cacheReadTokens,
 		CacheCreationTokens:     cacheCreationTokens,
 	}
+	longWrite := usageNode.Get("cache_creation.ephemeral_1h_input_tokens")
+	detail.CacheCreation1hTokens = longWrite.Int()
+	detail.CacheCreation1hReported = longWrite.Exists()
 	// Anthropic reports the speed a response was served and billed at in
 	// usage.speed ("fast" or "standard"): fast mode costs more, and a
 	// fast request on a model without it runs, and is billed, at standard.
@@ -1425,7 +1442,7 @@ func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 }
 
 func hasUsageDetail(detail usage.Detail) bool {
-	return detail.ReasoningTokensReported || hasNonZeroTokenUsage(detail)
+	return detail.ReasoningTokensReported || detail.CacheCreation1hReported || detail.CacheCreationLongReported || hasNonZeroTokenUsage(detail)
 }
 
 func ParseInteractionsUsage(data []byte) usage.Detail {

@@ -111,16 +111,20 @@ type Failure struct {
 
 // Detail holds the token usage breakdown.
 type Detail struct {
-	InputTokens             int64
-	OutputTokens            int64
-	ReasoningTokens         int64
-	ReasoningTokensReported bool
-	CachedTokens            int64
-	CacheReadTokens         int64
-	CacheCreationTokens     int64
-	TotalTokens             int64
-	TokenBreakdown          TokenBreakdown
-	ResponseServiceTier     string
+	InputTokens               int64
+	OutputTokens              int64
+	ReasoningTokens           int64
+	ReasoningTokensReported   bool
+	CachedTokens              int64
+	CacheReadTokens           int64
+	CacheCreationTokens       int64
+	CacheCreation1hTokens     int64
+	CacheCreation1hReported   bool
+	CacheCreationLongTokens   int64
+	CacheCreationLongReported bool
+	TotalTokens               int64
+	TokenBreakdown            TokenBreakdown
+	ResponseServiceTier       string
 }
 
 type requestedModelAliasContextKey struct{}

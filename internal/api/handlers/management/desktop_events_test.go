@@ -7,6 +7,41 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
+func TestDesktopEventBillingFields(t *testing.T) {
+	for _, tc := range []struct{ upstream, want string }{
+		{"default", "standard"}, {"standard", "standard"}, {"fast", "fast"},
+		{"priority", "fast"}, {"flex", "flex"}, {"", ""}, {"auto", ""}, {"unknown", ""},
+	} {
+		for _, reported := range []bool{false, true} {
+			for _, tokens := range []int64{0, 7} {
+				record := coreusage.Record{ServiceTier: "fast", EffectiveServiceTier: "fast", ResponseServiceTier: tc.upstream,
+					Detail: coreusage.Detail{CacheCreationTokens: 9, CacheCreation1hTokens: tokens, CacheCreation1hReported: reported,
+						CacheCreationLongTokens: tokens, CacheCreationLongReported: reported}}
+				data, err := json.Marshal(desktopEventFromRecord(record))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(data, &fields); err != nil {
+					t.Fatal(err)
+				}
+				for _, key := range []string{"cache_creation_1h_tokens", "cache_creation_long_tokens"} {
+					value, exists := fields[key]
+					if exists != reported || (exists && value != float64(tokens)) {
+						t.Fatalf("%s: %s", key, data)
+					}
+				}
+				if value, exists := fields["tier"]; exists != (tc.want != "") || (exists && value != tc.want) {
+					t.Fatalf("tier: %s, upstream=%q", data, tc.upstream)
+				}
+				if fields["cache_creation_tokens"] != float64(9) {
+					t.Fatalf("total changed: %s", data)
+				}
+			}
+		}
+	}
+}
+
 func TestDesktopEventReportsCacheReadsAndWrites(t *testing.T) {
 	record := coreusage.Record{Detail: coreusage.Detail{InputTokens: 2, OutputTokens: 900, CachedTokens: 80000, CacheCreationTokens: 1500}}
 	event := desktopEventFromRecord(record)

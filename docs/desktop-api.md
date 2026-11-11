@@ -288,8 +288,24 @@ upstream attempt, successful or failed:
   `request_id` remains a separate execution identifier.
 
 - `cached_tokens`: cache reads. `cache_creation_tokens`: cache writes. Claude
-  counts both apart from `input_tokens`; OpenAI includes `cached_tokens` in
-  `input_tokens` and reports no cache writes.
+  counts both apart from `input_tokens`; OpenAI includes reads and writes in
+  `input_tokens`. OpenAI/Codex writes come from `input_tokens_details.cache_write_tokens`
+  (or Chat Completions `prompt_tokens_details.cache_write_tokens`).
+- `cache_creation_1h_tokens`: optional integer, the 1-hour subset of Claude's
+  total `cache_creation_tokens`, from `usage.cache_creation.ephemeral_1h_input_tokens`.
+- `cache_creation_long_tokens`: optional integer, the 12-hour subset of OpenAI/Codex's
+  total `cache_creation_tokens`, from `input_tokens_details.cache_write_tokens_details.ttl_12h_tokens`
+  (or the corresponding `prompt_tokens_details` field). The other write lifetime is
+  `ttl_30m_tokens`. Both subset fields include zero when reported and are omitted
+  when upstream did not report the split; neither is added to the total.
+- `tier`: optional billed response tier, never inferred from the request.
+  Claude `usage.speed` supplies `standard` or `fast`. OpenAI/Codex response
+  `service_tier` maps `default` to `standard`, `priority`/`fast` to `fast`, and
+  `flex` to `flex`. Unknown or absent values are omitted. OpenAI renamed Priority
+  processing to Fast mode; `priority` and `fast` select the same service.
+  Sources: [OpenAI cache usage](https://developers.openai.com/api/docs/guides/prompt-caching#usage),
+  [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode),
+  [Claude fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 - `alias`: optional client-requested model/alias; `model` is the effective upstream
   request model. Keep them separate when displaying requested versus effective routing.
 - `reasoning_effort`: optional effective effort extracted from the final translated

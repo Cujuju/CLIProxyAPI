@@ -23,7 +23,53 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	"github.com/tidwall/gjson"
 )
+
+func TestUsageCacheLifetimeSplits(t *testing.T) {
+	for _, split := range []string{"", `,"cache_creation":{"ephemeral_1h_input_tokens":0}`, `,"cache_creation":{"ephemeral_1h_input_tokens":7}`} {
+		body := `{"usage":{"input_tokens":10,"output_tokens":2,"cache_creation_input_tokens":9,"speed":"fast"` + split + `}}`
+		want := gjson.Get(body, "usage.cache_creation.ephemeral_1h_input_tokens")
+		detail := ParseClaudeUsage([]byte(body))
+		check := func(detail usage.Detail) {
+			t.Helper()
+			if detail.CacheCreationTokens != 9 || detail.CacheCreation1hReported != want.Exists() || detail.CacheCreation1hTokens != want.Int() || detail.ResponseServiceTier != "fast" {
+				t.Fatalf("Claude detail = %+v, split = %s", detail, split)
+			}
+		}
+		check(detail)
+		var buffer StreamUsageBuffer
+		buffer.ObserveClaudeStream([]byte(`data: {"type":"message_start","message":` + body + `}`))
+		buffer.ObserveClaudeStream([]byte(`data: {"type":"message_delta","usage":{"output_tokens":5}}`))
+		check(buffer.detail)
+	}
+	for _, detailsKey := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		for _, split := range []string{"", `,"cache_write_tokens_details":{"ttl_30m_tokens":9,"ttl_12h_tokens":0}`, `,"cache_write_tokens_details":{"ttl_30m_tokens":2,"ttl_12h_tokens":7}`} {
+			body := `{"service_tier":"flex","usage":{"input_tokens":10,"output_tokens":2,"` + detailsKey + `":{"cache_write_tokens":9` + split + `}}}`
+			want := gjson.Get(body, "usage."+detailsKey+".cache_write_tokens_details.ttl_12h_tokens")
+			check := func(detail usage.Detail) {
+				t.Helper()
+				if detail.CacheCreationTokens != 9 || detail.CacheCreationLongReported != want.Exists() || detail.CacheCreationLongTokens != want.Int() || detail.ResponseServiceTier != "flex" {
+					t.Fatalf("OpenAI detail = %+v, body = %s", detail, body)
+				}
+			}
+			check(ParseOpenAIUsage([]byte(body)))
+			stream, ok := ParseOpenAIStreamUsage([]byte("data: " + body))
+			if !ok {
+				t.Fatal("missing OpenAI stream usage")
+			}
+			check(stream)
+			var buffer StreamUsageBuffer
+			buffer.ObserveOpenAIStream([]byte("data: " + body))
+			check(buffer.detail)
+			codex, ok := ParseCodexUsage([]byte(`{"type":"response.completed","response":` + body + `}`))
+			if !ok {
+				t.Fatal("missing Codex terminal usage")
+			}
+			check(codex)
+		}
+	}
+}
 
 func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":10,"completion_tokens":6,"total_tokens":16,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":5}}}`)
@@ -281,6 +327,49 @@ func TestStreamUsageBufferPreservesReasoningAcrossChunks(t *testing.T) {
 				t.Fatalf("detail = %+v, want latest usage", detail)
 			}
 		})
+	}
+}
+
+func TestStreamUsageBufferPreservesCacheCreationSplitsAcrossChunks(t *testing.T) {
+	for _, tokens := range []int64{0, 7} {
+		t.Run(fmt.Sprintf("subset_%d", tokens), func(t *testing.T) {
+			var buffer StreamUsageBuffer
+			buffer.Observe(usage.Detail{
+				CacheCreationTokens:       9,
+				CacheCreation1hTokens:     tokens,
+				CacheCreation1hReported:   true,
+				CacheCreationLongTokens:   tokens,
+				CacheCreationLongReported: true,
+			}, true)
+			buffer.Observe(usage.Detail{CacheCreationTokens: 9, OutputTokens: 5}, true)
+			detail, ok := buffer.Detail()
+			if !ok || !detail.CacheCreation1hReported || detail.CacheCreation1hTokens != tokens ||
+				!detail.CacheCreationLongReported || detail.CacheCreationLongTokens != tokens {
+				t.Fatalf("detail = %+v, ok = %v, want reported subsets %d", detail, ok, tokens)
+			}
+			if detail.CacheCreationTokens != 9 || detail.OutputTokens != 5 {
+				t.Fatalf("detail = %+v, want latest usage", detail)
+			}
+		})
+	}
+}
+
+func TestStreamUsageBufferPreservesReportedZeroCacheCreationSplitsWithTier(t *testing.T) {
+	t.Parallel()
+
+	for _, reported := range []struct{ oneHour, long bool }{{true, false}, {false, true}, {true, true}} {
+		var buffer StreamUsageBuffer
+		buffer.Observe(usage.Detail{
+			CacheCreation1hReported:   reported.oneHour,
+			CacheCreationLongReported: reported.long,
+			ResponseServiceTier:       "flex",
+		}, true)
+		detail, ok := buffer.Detail()
+		if !ok || detail.CacheCreation1hReported != reported.oneHour || detail.CacheCreation1hTokens != 0 ||
+			detail.CacheCreationLongReported != reported.long || detail.CacheCreationLongTokens != 0 ||
+			detail.ResponseServiceTier != "flex" {
+			t.Fatalf("detail = %+v, ok = %v, want reported zero subsets %+v with tier flex", detail, ok, reported)
+		}
 	}
 }
 
