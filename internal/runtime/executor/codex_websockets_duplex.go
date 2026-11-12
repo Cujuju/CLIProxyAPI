@@ -582,6 +582,9 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				snapshot := *current
 				snapshot.originalPayload, snapshot.wsHeaders = nil, nil
 				snapshot.clientBody = []byte("{}")
+				if metadata := gjson.GetBytes(current.clientBody, "client_metadata"); metadata.Exists() {
+					snapshot.clientBody, _ = sjson.SetRawBytes(snapshot.clientBody, "client_metadata", []byte(metadata.Raw))
+				}
 				if reasoning := gjson.GetBytes(current.clientBody, "reasoning"); reasoning.Exists() {
 					snapshot.clientBody, _ = sjson.SetRawBytes(snapshot.clientBody, "reasoning", []byte(reasoning.Raw))
 				}

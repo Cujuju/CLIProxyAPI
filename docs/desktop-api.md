@@ -403,3 +403,7 @@ chatgpt.com is returned as `502`, and a client that disconnects first gets
 
 `GET`/`HEAD /api/hello` answers `200 {"message":"hello"}` without a key, as
 api.anthropic.com does. Claude Code probes it at startup.
+
+Each `/usage/events` request includes `turn_key` (string or null). Codex uses `codex:<turn_id>` from X-Codex-Turn-Metadata or its JSON-string client_metadata counterpart. Claude messages use `claude:<prompt count>:<12 hex SHA256>` of the last user content without tool_result. Tool loops retain that key; unsupported requests report null.
+
+`GET /credentials/models` preserves each model's upstream Unix-seconds `created` timestamp when positive; absent timestamps have no inferred ordering.

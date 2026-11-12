@@ -58,6 +58,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return e.executeClaudeNonStream(ctx, auth, req, opts)
 	}
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)
@@ -277,6 +278,7 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 		}
 	}
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)

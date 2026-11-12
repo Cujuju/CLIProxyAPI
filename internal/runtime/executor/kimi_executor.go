@@ -130,6 +130,7 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 
 	token := kimiCreds(auth)
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)
@@ -270,6 +271,7 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	token := kimiCreds(auth)
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)
@@ -440,6 +442,7 @@ func (e *KimiExecutor) executeResponses(ctx context.Context, auth *cliproxyauth.
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	token := kimiCreds(auth)
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)
@@ -580,6 +583,7 @@ func (e *KimiExecutor) executeResponsesStream(ctx context.Context, auth *cliprox
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	token := kimiCreds(auth)
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)

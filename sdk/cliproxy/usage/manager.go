@@ -24,6 +24,7 @@ const AutoServiceTier = "auto"
 
 // Record contains the usage statistics captured for a single provider request.
 type Record struct {
+	TurnKey string
 	// RequestID uniquely identifies this specific model execution instance (UUID v4).
 	RequestID string
 	// UpstreamID is the provider's response identifier, empty when unavailable.

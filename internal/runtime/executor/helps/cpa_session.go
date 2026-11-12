@@ -15,6 +15,7 @@ func EnsureSessionContext(ctx context.Context, opts cliproxyexecutor.Options, pa
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = withTurnKey(ctx, opts, payload)
 	if id := util.SessionIDFromContext(ctx); id != "" {
 		return ctx
 	}

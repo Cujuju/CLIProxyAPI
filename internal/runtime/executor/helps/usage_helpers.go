@@ -27,6 +27,7 @@ import (
 
 type UsageReporter struct {
 	transport            transportObservation
+	turnKey              string
 	requestID            string
 	traceID              string
 	selectionID          string
@@ -132,6 +133,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		traceID = internallogging.GetRequestID(ctx)
 	}
 	reporter := &UsageReporter{
+		turnKey:         turnKeyFromContext(ctx),
 		requestID:       uuid.NewString(),
 		traceID:         traceID,
 		selectionID:     usage.SelectionIDFromContext(ctx),
@@ -388,6 +390,12 @@ func (r *UsageReporter) PublishAdditionalModel(ctx context.Context, model string
 func (r *UsageReporter) SetTranslatedRequestMetadata(payload []byte, format string) {
 	if r == nil {
 		return
+	}
+	if format == "codex" {
+		metadata := gjson.GetBytes(payload, "client_metadata.x-codex-turn-metadata").String()
+		if id := strings.TrimSpace(gjson.Get(metadata, "turn_id").String()); id != "" {
+			r.turnKey = "codex:" + id
+		}
 	}
 	r.requestSettings = extractRequestSettings(payload, format)
 	r.reasoning = thinking.ExtractTranslatedReasoningEffort(payload, format)
@@ -729,6 +737,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		APIKey:                  r.apiKey,
 		IsNativeKey:             r.isNativeKey,
 		AccessProvider:          r.accessProvider,
+		TurnKey:                 r.turnKey,
 		SessionID:               r.sessionID,
 		SessionKind:             r.sessionKind,
 		StatusCode:              int(r.statusCode.Load()),
