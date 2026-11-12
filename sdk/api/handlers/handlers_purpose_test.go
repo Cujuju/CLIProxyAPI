@@ -17,7 +17,7 @@ type purposeUsagePlugin struct{ records chan usage.Record }
 func (p *purposeUsagePlugin) HandleUsage(_ context.Context, record usage.Record) { p.records <- record }
 
 func TestCanaryPurposeCapturedAndStripped(t *testing.T) {
-	for _, value := range []string{"canary", "window-start", "other", ""} {
+	for _, value := range []string{"thinking-test", "canary", "window-start", "other", ""} {
 		t.Run(value, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -36,8 +36,8 @@ func TestCanaryPurposeCapturedAndStripped(t *testing.T) {
 			select {
 			case record := <-plugin.records:
 				want := ""
-				if value == "canary" {
-					want = "canary"
+				if value == "canary" || value == "thinking-test" {
+					want = value
 				}
 				if record.Purpose != want {
 					t.Fatalf("purpose=%q, want %q", record.Purpose, want)

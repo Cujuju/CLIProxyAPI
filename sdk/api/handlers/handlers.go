@@ -631,8 +631,8 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	}
 	if c != nil && c.Request != nil {
 		purpose := ""
-		if c.Request.Header.Get("X-CPA-Purpose") == "canary" {
-			purpose = "canary"
+		if value := c.Request.Header.Get("X-CPA-Purpose"); value == "canary" || value == "thinking-test" {
+			purpose = value
 		}
 		c.Request.Header.Del("X-CPA-Purpose")
 		sessionID, parentSessionID := extractSessionIDsFromRequest(c.Request)
