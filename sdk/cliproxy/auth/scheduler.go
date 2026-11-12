@@ -751,6 +751,10 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 	var latestAuthID string
 	var latestAuthErr error
 
+	allCodex := true
+	var earliestCodexTime time.Time
+	var earliestCodexID string
+	var earliestCodexSignals map[string]string
 	allClaude := true
 	var earliestClaudeTime time.Time
 	var earliestClaudeID string
@@ -773,6 +777,13 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 			earliest = localEarliest
 		}
 		if localTotal > 0 {
+			localCodex, localTime, localID, localCodexSignals := shard.quotaCooldownSummaryLocked(providerKey, model, now, predicate, "codex", codexQuotaCooldownForAuth)
+			if !localCodex {
+				allCodex = false
+			} else if earliestCodexTime.IsZero() || localTime.Before(earliestCodexTime) || (localTime.Equal(earliestCodexTime) && localID < earliestCodexID) {
+				earliestCodexTime, earliestCodexID, earliestCodexSignals = localTime, localID, localCodexSignals
+			}
+
 			localClaude, localClaudeEarliest, localClaudeID, localSignals := shard.claudeCooldownSummaryLocked(providerKey, model, now, predicate)
 			if !localClaude {
 				allClaude = false
@@ -820,7 +831,10 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 		if allClaude {
 			claudeSignals = earliestClaudeSignals
 		}
-		return newModelCooldownErrorForCandidates(model, "", resetIn, lastCandidateErr, allClaude, claudeSignals)
+		if !allCodex {
+			earliestCodexSignals = nil
+		}
+		return newModelCooldownErrorForCandidates(model, "", resetIn, lastCandidateErr, allClaude, claudeSignals).withCodexSignals(earliestCodexSignals)
 	}
 	if unauthorizedCount == total {
 		terminalCause := latestAuthErr
@@ -1569,7 +1583,8 @@ func (m *modelScheduler) unavailableErrorLocked(provider, model string, predicat
 			resetIn = 0
 		}
 		claudeCooldown, _, _, claudeSignals := m.claudeCooldownSummaryLocked(provider, model, now, predicate)
-		return newModelCooldownErrorForCandidates(model, providerForError, resetIn, lastCandidateErr, claudeCooldown, claudeSignals)
+		_, _, _, codexSignals := m.quotaCooldownSummaryLocked(provider, model, now, predicate, "codex", codexQuotaCooldownForAuth)
+		return newModelCooldownErrorForCandidates(model, providerForError, resetIn, lastCandidateErr, claudeCooldown, claudeSignals).withCodexSignals(codexSignals)
 	}
 	if unauthorizedCount == total {
 		terminalCause := authErr
@@ -1686,6 +1701,10 @@ func (m *modelScheduler) availabilitySummaryLocked(predicate func(*scheduledAuth
 }
 
 func (m *modelScheduler) claudeCooldownSummaryLocked(fallbackProvider, model string, now time.Time, predicate func(*scheduledAuth) bool) (bool, time.Time, string, map[string]string) {
+	return m.quotaCooldownSummaryLocked(fallbackProvider, model, now, predicate, "claude", claudeUnifiedCooldownForAuth)
+}
+
+func (m *modelScheduler) quotaCooldownSummaryLocked(fallbackProvider, model string, now time.Time, predicate func(*scheduledAuth) bool, provider string, cooldownForAuth func(*Auth, string, time.Time) (bool, map[string]string)) (bool, time.Time, string, map[string]string) {
 	if m == nil {
 		return false, time.Time{}, "", nil
 	}
@@ -1710,14 +1729,14 @@ func (m *modelScheduler) claudeCooldownSummaryLocked(fallbackProvider, model str
 		} else {
 			entryProvider = strings.ToLower(strings.TrimSpace(fallbackProvider))
 		}
-		if entryProvider != "claude" {
+		if entryProvider != provider {
 			return false, time.Time{}, "", nil
 		}
 		checkModel := model
 		if existingModelState(entry.auth, checkModel) == nil && m.modelKey != "" {
 			checkModel = m.modelKey
 		}
-		okClaude, signals := claudeUnifiedCooldownForAuth(entry.auth, checkModel, now)
+		okClaude, signals := cooldownForAuth(entry.auth, checkModel, now)
 		if !okClaude {
 			return false, time.Time{}, "", nil
 		}

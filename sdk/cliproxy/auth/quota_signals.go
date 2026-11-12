@@ -291,3 +291,25 @@ func mergeQuotaObservation(target, source QuotaState) QuotaState {
 	}
 	return target
 }
+
+func rejectedQuotaSignalsForCooldown(provider string, headers http.Header) map[string]string {
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		signals := collectQuotaSignals("codex", headers)
+		if hasRejectedCodexSignals(signals) {
+			return signals
+		}
+		return nil
+	}
+	return rejectedClaudeSignalsForCooldown(provider, headers)
+}
+
+func sanitizePersistedCooldownSignals(provider string, raw map[string]string) map[string]string {
+	if !strings.EqualFold(provider, "codex") {
+		return sanitizePersistedClaudeCooldownSignals(raw)
+	}
+	headers := make(http.Header, len(raw))
+	for key, value := range raw {
+		headers.Set(key, value)
+	}
+	return rejectedQuotaSignalsForCooldown("codex", headers)
+}

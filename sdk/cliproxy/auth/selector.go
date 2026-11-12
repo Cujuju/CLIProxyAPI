@@ -111,7 +111,8 @@ type modelCooldownError struct {
 	claudeCooldown bool
 	claudeSignals  map[string]string
 	// usageLimit is set when every eligible credential is out of quota; see quota_exhaustion.go.
-	usageLimit quotaLimit
+	usageLimit   quotaLimit
+	codexSignals map[string]string
 }
 
 // NewModelCooldownError creates an error representing model-level cooldown.
@@ -139,6 +140,11 @@ func newModelCooldownErrorForCandidates(model, provider string, resetIn time.Dur
 		claudeCooldown: claudeCooldown,
 		claudeSignals:  maps.Clone(claudeSignals),
 	}
+}
+
+func (e *modelCooldownError) withCodexSignals(signals map[string]string) *modelCooldownError {
+	e.codexSignals = maps.Clone(signals)
+	return e
 }
 
 func isClaudeCooldownProvider(provider string) bool {
@@ -449,6 +455,9 @@ func (e *modelCooldownError) Headers() http.Header {
 	if e != nil && e.claudeCooldown && e.resetIn > 0 {
 		e.appendClaudeUnifiedHeaders(headers)
 	}
+	if e != nil && e.resetIn > 0 {
+		e.appendCodexHeaders(headers)
+	}
 	return headers
 }
 
@@ -723,7 +732,11 @@ func claudeSignalsFromEvaluatedQuota(q QuotaState) (bool, map[string]string) {
 }
 
 func claudeUnifiedCooldownForAuth(auth *Auth, model string, now time.Time) (bool, map[string]string) {
-	if auth == nil || executorKeyFromAuth(auth) != "claude" {
+	return quotaCooldownForAuth(auth, model, now, "claude", claudeSignalsFromEvaluatedQuota)
+}
+
+func quotaCooldownForAuth(auth *Auth, model string, now time.Time, provider string, signalsForQuota func(QuotaState) (bool, map[string]string)) (bool, map[string]string) {
+	if auth == nil || executorKeyFromAuth(auth) != provider {
 		return false, nil
 	}
 	if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now) {
@@ -736,15 +749,15 @@ func claudeUnifiedCooldownForAuth(auth *Auth, model string, now time.Time) (bool
 				if strings.EqualFold(strings.TrimSpace(shadow.Quota.Reason), "cloudflare challenge") {
 					return false, nil
 				}
-				return claudeSignalsFromEvaluatedQuota(shadow.Quota)
+				return signalsForQuota(shadow.Quota)
 			}
 			return false, nil
 		}
-		if ok, signals := claudeSignalsFromEvaluatedQuota(auth.Quota); ok {
+		if ok, signals := signalsForQuota(auth.Quota); ok {
 			return true, signals
 		}
 		if state != nil && !state.Quota.NextRecoverAt.Before(auth.Quota.NextRecoverAt) {
-			if ok, signals := claudeSignalsFromEvaluatedQuota(state.Quota); ok {
+			if ok, signals := signalsForQuota(state.Quota); ok {
 				return true, signals
 			}
 		}
@@ -774,7 +787,7 @@ func claudeUnifiedCooldownForAuth(auth *Auth, model string, now time.Time) (bool
 				if strings.EqualFold(strings.TrimSpace(st.Quota.Reason), "cloudflare challenge") {
 					return false, nil
 				}
-				okSt, sig := claudeSignalsFromEvaluatedQuota(st.Quota)
+				okSt, sig := signalsForQuota(st.Quota)
 				if !okSt {
 					return false, nil
 				}
@@ -796,7 +809,7 @@ func claudeUnifiedCooldownForAuth(auth *Auth, model string, now time.Time) (bool
 		if strings.EqualFold(strings.TrimSpace(state.Quota.Reason), "cloudflare challenge") {
 			return false, nil
 		}
-		return claudeSignalsFromEvaluatedQuota(state.Quota)
+		return signalsForQuota(state.Quota)
 	}
 	if !auth.Quota.Exceeded || !auth.Quota.NextRecoverAt.After(now) || auth.NextRetryAfter.After(auth.Quota.NextRecoverAt) {
 		return false, nil
@@ -804,10 +817,14 @@ func claudeUnifiedCooldownForAuth(auth *Auth, model string, now time.Time) (bool
 	if strings.EqualFold(strings.TrimSpace(auth.Quota.Reason), "cloudflare challenge") {
 		return false, nil
 	}
-	return claudeSignalsFromEvaluatedQuota(auth.Quota)
+	return signalsForQuota(auth.Quota)
 }
 
 func claudeCooldownMetadataForAuths(ctx context.Context, auths []*Auth, modelForAuth func(*Auth) string, now time.Time, clientHeaders ...http.Header) (bool, map[string]string) {
+	return cooldownMetadataForAuths(ctx, auths, modelForAuth, now, claudeUnifiedCooldownForAuth, clientHeaders...)
+}
+
+func cooldownMetadataForAuths(ctx context.Context, auths []*Auth, modelForAuth func(*Auth) string, now time.Time, cooldownForAuth func(*Auth, string, time.Time) (bool, map[string]string), clientHeaders ...http.Header) (bool, map[string]string) {
 	if len(auths) == 0 {
 		return false, nil
 	}
@@ -819,7 +836,7 @@ func claudeCooldownMetadataForAuths(ctx context.Context, auths []*Auth, modelFor
 		if modelForAuth != nil {
 			checkModel = modelForAuth(candidate)
 		}
-		okClaude, signals := claudeUnifiedCooldownForAuth(candidate, checkModel, now)
+		okClaude, signals := cooldownForAuth(candidate, checkModel, now)
 		if !okClaude {
 			return false, nil
 		}
@@ -1036,7 +1053,8 @@ func getAvailableAuthsWithPriorityModeForRequest(ctx context.Context, auths []*A
 			claudeCooldown, claudeSignals := claudeCooldownMetadataForAuths(ctx, auths, func(*Auth) string {
 				return model
 			}, now, clientHeaders...)
-			return nil, newModelCooldownErrorForCandidates(model, providerForError, resetIn, nil, claudeCooldown, claudeSignals)
+			codexSignals := codexCooldownMetadataForAuths(ctx, auths, func(*Auth) string { return model }, now, clientHeaders...)
+			return nil, newModelCooldownErrorForCandidates(model, providerForError, resetIn, nil, claudeCooldown, claudeSignals).withCodexSignals(codexSignals)
 		}
 		return nil, newAuthUnavailableError(earliest, now)
 	}

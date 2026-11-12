@@ -398,8 +398,9 @@ func (m *Manager) restoreCooldownRecordLocked(record CooldownStateRecord, now ti
 		quota.NextRecoverAt = record.NextRetryAfter
 	}
 	quota.cooldownEvaluated = quota.Exceeded
-	if executorKeyFromAuth(auth) == "claude" || strings.EqualFold(strings.TrimSpace(record.Provider), "claude") {
-		quota.cooldownSignals = sanitizePersistedClaudeCooldownSignals(record.CooldownSignals)
+	if executorKeyFromAuth(auth) == "claude" || strings.EqualFold(strings.TrimSpace(record.Provider), "claude") ||
+		executorKeyFromAuth(auth) == "codex" || strings.EqualFold(strings.TrimSpace(record.Provider), "codex") {
+		quota.cooldownSignals = sanitizePersistedCooldownSignals(executorKeyFromAuth(auth), record.CooldownSignals)
 	}
 
 	seedInitialForceCooldownDeadlines(auth)
@@ -584,8 +585,9 @@ func (m *Manager) restoreCooldownRecordLocked(record CooldownStateRecord, now ti
 				restoredShadow.forceCooldownUntil = indepForceUntil
 			}
 			restoredShadow.forceCooldownSeeded = true
-			if executorKeyFromAuth(auth) == "claude" || strings.EqualFold(strings.TrimSpace(record.Provider), "claude") {
-				restoredShadow.Quota.cooldownSignals = sanitizePersistedClaudeCooldownSignals(record.IndependentCooldownSignals)
+			if executorKeyFromAuth(auth) == "claude" || strings.EqualFold(strings.TrimSpace(record.Provider), "claude") ||
+				executorKeyFromAuth(auth) == "codex" || strings.EqualFold(strings.TrimSpace(record.Provider), "codex") {
+				restoredShadow.Quota.cooldownSignals = sanitizePersistedCooldownSignals(executorKeyFromAuth(auth), record.IndependentCooldownSignals)
 			}
 		}
 		state.credentialQuotaShadow = mergeModelState(liveShadow, restoredShadow)
@@ -1371,7 +1373,7 @@ func authCooldownStateRecord(auth *Auth, now time.Time) (CooldownStateRecord, bo
 	}
 	var cooldownSignals map[string]string
 	if auth.Quota.Exceeded && auth.Quota.NextRecoverAt.After(now) && !auth.NextRetryAfter.After(auth.Quota.NextRecoverAt) {
-		cooldownSignals = sanitizePersistedClaudeCooldownSignals(auth.Quota.cooldownSignals)
+		cooldownSignals = sanitizePersistedCooldownSignals(executorKeyFromAuth(auth), auth.Quota.cooldownSignals)
 	}
 	var authForceUntil time.Time
 	if u := effectiveAuthForceUntil(auth); u.After(now) {
@@ -1410,7 +1412,7 @@ func modelCooldownStateRecord(auth *Auth, model string, state *ModelState, now t
 	expiredCredentialWrap := (state.credentialQuotaPropagated || state.Quota.Reason == "credential_quota") && !liveCredentialWrap
 	if !expiredCredentialWrap && state.Quota.Exceeded && state.Quota.NextRecoverAt.After(now) &&
 		(state.Quota.Reason == "credential_quota" || !state.NextRetryAfter.After(state.Quota.NextRecoverAt)) {
-		cooldownSignals = sanitizePersistedClaudeCooldownSignals(state.Quota.cooldownSignals)
+		cooldownSignals = sanitizePersistedCooldownSignals(executorKeyFromAuth(auth), state.Quota.cooldownSignals)
 	}
 	var outerForceUntil time.Time
 	if liveCredentialWrap {
@@ -1442,7 +1444,7 @@ func modelCooldownStateRecord(auth *Auth, model string, state *ModelState, now t
 		}
 		if state.credentialQuotaShadow.Quota.Exceeded && state.credentialQuotaShadow.Quota.NextRecoverAt.After(now) &&
 			!state.credentialQuotaShadow.NextRetryAfter.After(state.credentialQuotaShadow.Quota.NextRecoverAt) {
-			record.IndependentCooldownSignals = sanitizePersistedClaudeCooldownSignals(state.credentialQuotaShadow.Quota.cooldownSignals)
+			record.IndependentCooldownSignals = sanitizePersistedCooldownSignals(executorKeyFromAuth(auth), state.credentialQuotaShadow.Quota.cooldownSignals)
 		}
 	}
 	record.CredentialQuotaPropagated = state.credentialQuotaPropagated
@@ -1832,7 +1834,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 								if keptPriorStateQuota {
 									cooldownSignals = prevStateCooldownSignals
 								} else {
-									cooldownSignals = rejectedClaudeSignalsForCooldown(result.Provider, responseHeaders)
+									cooldownSignals = rejectedQuotaSignalsForCooldown(result.Provider, responseHeaders)
 									if len(cooldownSignals) == 0 && prevStateQuotaActive && prevStateRecoverAt.Equal(next) {
 										cooldownSignals = prevStateCooldownSignals
 									}
@@ -1878,7 +1880,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 								if prevAuthCredActive && (prevAuthCredRecoverAt.After(credentialNext) || result.RetryAfter == nil) {
 									credCooldownSignals = prevAuthCredSignals
 								} else {
-									credCooldownSignals = rejectedClaudeSignalsForCooldown(result.Provider, responseHeaders)
+									credCooldownSignals = rejectedQuotaSignalsForCooldown(result.Provider, responseHeaders)
 									if len(credCooldownSignals) == 0 && prevAuthCredActive && prevAuthCredRecoverAt.Equal(credentialNext) {
 										credCooldownSignals = prevAuthCredSignals
 									}
@@ -2118,7 +2120,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						auth.Quota.cooldownEvaluated = true
 						if keptPriorAuthQuota {
 							auth.Quota.cooldownSignals = prevAuthCooldownSignals
-						} else if rejectedSignals := rejectedClaudeSignalsForCooldown(result.Provider, responseHeaders); len(rejectedSignals) > 0 {
+						} else if rejectedSignals := rejectedQuotaSignalsForCooldown(result.Provider, responseHeaders); len(rejectedSignals) > 0 {
 							auth.Quota.cooldownSignals = rejectedSignals
 						} else if prevAuthQuotaActive && auth.Quota.NextRecoverAt.Equal(prevAuthRecoverAt) {
 							auth.Quota.cooldownSignals = prevAuthCooldownSignals
