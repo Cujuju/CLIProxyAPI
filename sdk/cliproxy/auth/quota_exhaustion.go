@@ -227,12 +227,9 @@ func isExplicitQuotaErrorBody(body string) bool {
 }
 
 // Codex builds its rate-limit state from response headers, and hosts such as T3 Code schedule a
-// resume from that state, so a usage-limit 429 repeats the pool's reset as Codex's headers.
-// Claude's unified headers come from upstream's Headers() path, behind passthrough-headers.
+// resume from that state. A usage-limit 429 without recorded Codex signals to replay therefore
+// repeats the pool's reset as Codex's headers, on the passthrough-gated Headers() path.
 const codexSignalPrefix = "X-Codex-"
-
-// usageLimitHeaderPrefixes are the header families setUsageLimitCodexHeaders writes.
-var usageLimitHeaderPrefixes = []string{codexSignalPrefix}
 
 // setUsageLimitCodexHeaders describes the credential that recovers first as one spent window.
 func setUsageLimitCodexHeaders(headers http.Header, limit quotaLimit) {
@@ -241,15 +238,4 @@ func setUsageLimitCodexHeaders(headers http.Header, limit quotaLimit) {
 	if limit.Window > 0 {
 		headers.Set(codexSignalPrefix+"Primary-Window-Minutes", strconv.Itoa(int(limit.Window/time.Minute)))
 	}
-}
-
-// isUsageLimitHeader reports whether name belongs to a family setUsageLimitCodexHeaders writes.
-func isUsageLimitHeader(name string) bool {
-	canonical := http.CanonicalHeaderKey(name)
-	for _, prefix := range usageLimitHeaderPrefixes {
-		if strings.HasPrefix(canonical, prefix) {
-			return true
-		}
-	}
-	return false
 }

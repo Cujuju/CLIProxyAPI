@@ -445,7 +445,6 @@ func (e *modelCooldownError) SafeResponseHeaders() http.Header {
 	if e.IsUsageLimit() {
 		// X-Should-Retry stops SDK clients sleeping on a multi-hour Retry-After; others still read when to return.
 		headers.Set(HeaderShouldRetry, "false")
-		setUsageLimitCodexHeaders(headers, e.usageLimit)
 	}
 	return headers
 }
@@ -457,6 +456,10 @@ func (e *modelCooldownError) Headers() http.Header {
 	}
 	if e != nil && e.resetIn > 0 {
 		e.appendCodexHeaders(headers)
+	}
+	// Without recorded Codex signals to replay, a final usage limit still names its reset.
+	if e != nil && e.IsUsageLimit() && !hasRejectedCodexSignals(e.codexSignals) {
+		setUsageLimitCodexHeaders(headers, e.usageLimit)
 	}
 	return headers
 }

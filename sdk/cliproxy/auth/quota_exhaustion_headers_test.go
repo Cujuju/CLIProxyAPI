@@ -3,17 +3,16 @@ package auth
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
 
-// usageLimitClientHeaders returns the headers every client receives for a usage-limit 429.
+// usageLimitClientHeaders returns the headers a passthrough-headers client receives for a usage-limit 429.
 func usageLimitClientHeaders(limit quotaLimit) http.Header {
 	err := newModelCooldownError("m", "codex", time.Until(limit.ResetsAt))
 	err.setUsageLimit(limit)
-	dst := http.Header{}
-	CopySafeErrorHeaders(dst, err)
-	return dst
+	return err.Headers()
 }
 
 // assertRetryAfterUntil allows one second for the clock to tick between response and check.
@@ -70,10 +69,8 @@ func TestUsageLimitClientHeaders_ClaudeUnifiedOnlyInHeaders(t *testing.T) {
 }
 
 func TestUsageLimitClientHeaders_OrdinaryCooldownHasNone(t *testing.T) {
-	dst := http.Header{}
-	CopySafeErrorHeaders(dst, newModelCooldownError("m", "claude", time.Minute))
-	for name := range dst {
-		if isUsageLimitHeader(name) {
+	for name := range newModelCooldownError("m", "codex", time.Minute).Headers() {
+		if strings.HasPrefix(name, codexSignalPrefix) {
 			t.Fatalf("retryable cooldown leaked usage-limit header %s", name)
 		}
 	}
