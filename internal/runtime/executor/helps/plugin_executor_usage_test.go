@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -92,6 +93,21 @@ func TestParsePluginExecutorResponseUsageResponsesShapes(t *testing.T) {
 			}
 			if detail.ResponseServiceTier != tt.tier {
 				t.Fatalf("response service tier = %q, want %q", detail.ResponseServiceTier, tt.tier)
+			}
+		})
+	}
+}
+
+func TestObservePluginExecutorStreamUsageRetainsClaudeCacheCreationSplitWithTotal(t *testing.T) {
+	for _, tokens := range []int64{0, 7} {
+		t.Run(fmt.Sprintf("subset_%d", tokens), func(t *testing.T) {
+			var buffer StreamUsageBuffer
+			start := fmt.Sprintf(`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":9,"cache_creation":{"ephemeral_1h_input_tokens":%d},"output_tokens":1}}}`, tokens)
+			ObservePluginExecutorStreamUsage("claude", []byte(start), &buffer)
+			ObservePluginExecutorStreamUsage("claude", []byte(`data: {"type":"message_delta","usage":{"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_1h_input_tokens":0},"output_tokens":5}}`), &buffer)
+			detail, ok := buffer.Detail()
+			if !ok || detail.CacheCreationTokens != 9 || detail.CacheCreation1hTokens == nil || *detail.CacheCreation1hTokens != tokens || detail.OutputTokens != 5 {
+				t.Fatalf("detail = %+v, ok = %v, want total 9 and reported subset %d", detail, ok, tokens)
 			}
 		})
 	}

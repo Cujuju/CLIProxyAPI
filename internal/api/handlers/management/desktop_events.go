@@ -52,8 +52,11 @@ type desktopRequestEvent struct {
 	InputTokens             int64                      `json:"input_tokens"`
 	Output                  int64                      `json:"output_tokens"`
 	// Cached counts cache reads; CacheWrite counts tokens written to the prompt cache.
-	Cached     int64 `json:"cached_tokens"`
-	CacheWrite int64 `json:"cache_creation_tokens"`
+	Cached         int64  `json:"cached_tokens"`
+	CacheWrite     int64  `json:"cache_creation_tokens"`
+	CacheWrite1h   *int64 `json:"cache_creation_1h_tokens,omitempty"`
+	CacheWriteLong *int64 `json:"cache_creation_long_tokens,omitempty"`
+	Tier           string `json:"tier,omitempty"`
 	// Purpose identifies window starters and client canary probes.
 	Purpose string `json:"purpose,omitempty"`
 	// SessionID is the client conversation (e.g. "claude:<session uuid>"); empty when the client sends none.
@@ -123,6 +126,16 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 	}
 	if record.Detail.ReasoningTokensReported {
 		event.ReasoningTokens = &record.Detail.ReasoningTokens
+	}
+	event.CacheWrite1h = coreusage.CloneInt64Ptr(record.Detail.CacheCreation1hTokens)
+	event.CacheWriteLong = coreusage.CloneInt64Ptr(record.Detail.CacheCreation12hTokens)
+	switch record.ResponseServiceTier {
+	case "default", "standard":
+		event.Tier = "standard"
+	case "priority", "fast":
+		event.Tier = "fast"
+	case "flex":
+		event.Tier = "flex"
 	}
 	if record.Fail.StatusCode != 0 {
 		event.StatusCode = record.Fail.StatusCode

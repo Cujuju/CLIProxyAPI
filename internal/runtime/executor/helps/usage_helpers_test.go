@@ -28,6 +28,56 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
+// cacheSplitIs reports whether a cache-write lifetime pointer is nil when unreported and want when reported.
+func cacheSplitIs(got *int64, want int64, reported bool) bool {
+	return (got != nil) == reported && (got == nil || *got == want)
+}
+
+func TestUsageCacheLifetimeSplits(t *testing.T) {
+	for _, split := range []string{"", `,"cache_creation":{"ephemeral_1h_input_tokens":0}`, `,"cache_creation":{"ephemeral_1h_input_tokens":7}`} {
+		body := `{"usage":{"input_tokens":10,"output_tokens":2,"cache_creation_input_tokens":9,"speed":"fast"` + split + `}}`
+		want := ojson.Get(body, "usage.cache_creation.ephemeral_1h_input_tokens")
+		detail := ParseClaudeUsage([]byte(body))
+		check := func(detail usage.Detail) {
+			t.Helper()
+			if detail.CacheCreationTokens != 9 || !cacheSplitIs(detail.CacheCreation1hTokens, want.Int(), want.Exists()) || detail.ResponseServiceTier != "fast" {
+				t.Fatalf("Claude detail = %+v, split = %s", detail, split)
+			}
+		}
+		check(detail)
+		var buffer StreamUsageBuffer
+		buffer.ObserveClaudeStream([]byte(`data: {"type":"message_start","message":` + body + `}`))
+		buffer.ObserveClaudeStream([]byte(`data: {"type":"message_delta","usage":{"output_tokens":5}}`))
+		check(buffer.detail)
+	}
+	for _, detailsKey := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		for _, split := range []string{"", `,"cache_write_tokens_details":{"ttl_30m_tokens":9,"ttl_12h_tokens":0}`, `,"cache_write_tokens_details":{"ttl_30m_tokens":2,"ttl_12h_tokens":7}`} {
+			body := `{"service_tier":"flex","usage":{"input_tokens":10,"output_tokens":2,"` + detailsKey + `":{"cache_write_tokens":9` + split + `}}}`
+			want := ojson.Get(body, "usage."+detailsKey+".cache_write_tokens_details.ttl_12h_tokens")
+			check := func(detail usage.Detail) {
+				t.Helper()
+				if detail.CacheCreationTokens != 9 || !cacheSplitIs(detail.CacheCreation12hTokens, want.Int(), want.Exists()) || detail.ResponseServiceTier != "flex" {
+					t.Fatalf("OpenAI detail = %+v, body = %s", detail, body)
+				}
+			}
+			check(ParseOpenAIUsage([]byte(body)))
+			stream, ok := ParseOpenAIStreamUsage([]byte("data: " + body))
+			if !ok {
+				t.Fatal("missing OpenAI stream usage")
+			}
+			check(stream)
+			var buffer StreamUsageBuffer
+			buffer.ObserveOpenAIStream([]byte("data: " + body))
+			check(buffer.detail)
+			codex, ok := ParseCodexUsage([]byte(`{"type":"response.completed","response":` + body + `}`))
+			if !ok {
+				t.Fatal("missing Codex terminal usage")
+			}
+			check(codex)
+		}
+	}
+}
+
 func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	data := []byte(`{"usage":{"prompt_tokens":10,"completion_tokens":6,"total_tokens":16,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":5}}}`)
 	detail := ParseOpenAIUsage(data)
@@ -284,6 +334,32 @@ func TestStreamUsageBufferPreservesReasoningAcrossChunks(t *testing.T) {
 				t.Fatalf("detail = %+v, want latest usage", detail)
 			}
 		})
+	}
+}
+
+// reportedZero is a reported zero-token split, or nil when unreported.
+func reportedZero(reported bool) *int64 {
+	if !reported {
+		return nil
+	}
+	return usage.Int64Ptr(0)
+}
+
+func TestStreamUsageBufferPreservesReportedZeroCacheCreationSplitsWithTier(t *testing.T) {
+	t.Parallel()
+
+	for _, reported := range []struct{ oneHour, long bool }{{true, false}, {false, true}, {true, true}} {
+		var buffer StreamUsageBuffer
+		buffer.Observe(usage.Detail{
+			CacheCreation1hTokens:  reportedZero(reported.oneHour),
+			CacheCreation12hTokens: reportedZero(reported.long),
+			ResponseServiceTier:    "flex",
+		}, true)
+		detail, ok := buffer.Detail()
+		if !ok || !cacheSplitIs(detail.CacheCreation1hTokens, 0, reported.oneHour) || !cacheSplitIs(detail.CacheCreation12hTokens, 0, reported.long) ||
+			detail.ResponseServiceTier != "flex" {
+			t.Fatalf("detail = %+v, ok = %v, want reported zero subsets %+v with tier flex", detail, ok, reported)
+		}
 	}
 }
 
