@@ -143,6 +143,6 @@ func (m *Manager) sessionHoldLimit(opts cliproxyexecutor.Options, providers []st
 		return nil
 	}
 	usageLimit := newModelCooldownError(model, "", limit.ResetsAt.Sub(now))
-	usageLimit.usageLimit = limit
+	usageLimit.setUsageLimit(limit)
 	return usageLimit
 }

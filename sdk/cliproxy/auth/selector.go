@@ -183,6 +183,7 @@ func (e *modelCooldownError) Error() string {
 		errorBody["type"] = usageLimitErrorType
 		errorBody["message"] = message
 		errorBody["resets_at"] = e.usageLimit.ResetsAt.Unix()
+		errorBody["resets_in_seconds"] = secondsUntil(e.usageLimit.ResetsAt, time.Now())
 		errorBody["retryable"] = false
 	}
 	if e.cause != nil {
@@ -388,11 +389,23 @@ func (e *modelCooldownError) StatusCode() int {
 }
 
 func (e *modelCooldownError) resetSeconds() int64 {
-	if e == nil || e.resetIn <= 0 {
+	if e == nil {
 		return 0
 	}
-	seconds := int64(e.resetIn / time.Second)
-	if e.resetIn%time.Second > 0 {
+	return ceilSeconds(e.resetIn)
+}
+
+// secondsUntil is whole seconds from now to t, rounded up; zero once t has passed.
+func secondsUntil(t, now time.Time) int64 {
+	return ceilSeconds(t.Sub(now))
+}
+
+func ceilSeconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	seconds := int64(d / time.Second)
+	if d%time.Second > 0 {
 		seconds++
 	}
 	return seconds
@@ -402,20 +415,18 @@ func (e *modelCooldownError) resetSeconds() int64 {
 func (e *modelCooldownError) SafeResponseHeaders() http.Header {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
-	if e.IsUsageLimit() {
-		// A multi-hour Retry-After makes clients sleep; a final limit tells them to stop.
-		headers.Set(HeaderShouldRetry, "false")
-		setUsageLimitClientHeaders(headers, e.usageLimit, time.Now())
-		return headers
-	}
 	headers.Set("Retry-After", strconv.FormatInt(e.resetSeconds(), 10))
+	if e.IsUsageLimit() {
+		// X-Should-Retry stops SDK clients sleeping on a multi-hour Retry-After; others still read when to return.
+		headers.Set(HeaderShouldRetry, "false")
+		setUsageLimitCodexHeaders(headers, e.usageLimit)
+	}
 	return headers
 }
 
 func (e *modelCooldownError) Headers() http.Header {
 	headers := e.SafeResponseHeaders()
-	// A final usage limit already carries its client-native headers.
-	if e != nil && e.claudeCooldown && e.resetIn > 0 && !e.IsUsageLimit() {
+	if e != nil && e.claudeCooldown && e.resetIn > 0 {
 		e.appendClaudeUnifiedHeaders(headers)
 	}
 	return headers
