@@ -984,6 +984,9 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				snapshot := *current
 				snapshot.originalPayload, snapshot.wsHeaders = nil, nil
 				snapshotDoc := ojson.NewDoc([]byte("{}"))
+				if metadata := ojson.GetBytesNoCopy(current.clientBody, "client_metadata"); metadata.Exists() {
+					_ = snapshotDoc.SetRawBytes("client_metadata", []byte(metadata.Raw))
+				}
 				if reasoning := ojson.GetBytesNoCopy(current.clientBody, "reasoning"); reasoning.Exists() {
 					_ = snapshotDoc.SetRawBytes("reasoning", []byte(reasoning.Raw))
 				}

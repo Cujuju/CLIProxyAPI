@@ -365,6 +365,9 @@ func (h *Handler) GetAuthFileModels(c *gin.Context) {
 		entry := gin.H{
 			"id": m.ID,
 		}
+		if m.Created > 0 {
+			entry["created"] = m.Created
+		}
 		if m.DisplayName != "" {
 			entry["display_name"] = m.DisplayName
 		}

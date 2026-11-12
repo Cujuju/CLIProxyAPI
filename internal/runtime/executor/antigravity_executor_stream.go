@@ -58,6 +58,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		}
 	}
 
+	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
 
 	ctx = reporter.WithTransportContext(ctx)

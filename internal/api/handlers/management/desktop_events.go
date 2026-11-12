@@ -27,6 +27,7 @@ const (
 
 // desktopRequestEvent is one upstream attempt as the desktop activity view shows it.
 type desktopRequestEvent struct {
+	TurnKey                 *string                    `json:"turn_key"`
 	At                      time.Time                  `json:"at"`
 	RequestID               string                     `json:"request_id"`
 	UpstreamID              string                     `json:"upstream_id,omitempty"`
@@ -123,6 +124,9 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 		InputTokens: record.Detail.InputTokens, Output: record.Detail.OutputTokens, Cached: record.Detail.CachedTokens,
 		CacheWrite:      record.Detail.CacheCreationTokens,
 		RequestSettings: record.RequestSettings, Purpose: record.Purpose,
+	}
+	if record.TurnKey != "" {
+		event.TurnKey = &record.TurnKey
 	}
 	if record.Detail.ReasoningTokensReported {
 		event.ReasoningTokens = &record.Detail.ReasoningTokens

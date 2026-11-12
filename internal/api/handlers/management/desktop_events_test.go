@@ -184,3 +184,23 @@ func TestDesktopEventCanaryPurpose(t *testing.T) {
 		t.Fatalf("purpose=%q", event.Purpose)
 	}
 }
+
+func TestDesktopEventTurnKey(t *testing.T) {
+	for _, key := range []string{"", "codex:turn", "claude:1:abcdef012345"} {
+		raw, err := json.Marshal(desktopEventFromRecord(coreusage.Record{TurnKey: key}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		value, exists := fields["turn_key"]
+		if !exists {
+			t.Fatal("turn_key omitted")
+		}
+		if key == "" && value != nil || key != "" && value != key {
+			t.Fatalf("turn_key = %v", value)
+		}
+	}
+}
