@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
-	"github.com/tidwall/gjson"
 )
 
 type turnKeyContext struct{}
@@ -29,8 +29,8 @@ func withTurnKey(ctx context.Context, opts cliproxyexecutor.Options, payload []b
 }
 
 func requestTurnKey(opts cliproxyexecutor.Options, payload []byte) string {
-	for _, metadata := range []string{opts.Headers.Get("X-Codex-Turn-Metadata"), gjson.GetBytes(payload, "client_metadata.x-codex-turn-metadata").String()} {
-		if id := strings.TrimSpace(gjson.Get(metadata, "turn_id").String()); id != "" {
+	for _, metadata := range []string{opts.Headers.Get("X-Codex-Turn-Metadata"), ojson.GetBytes(payload, "client_metadata.x-codex-turn-metadata").String()} {
+		if id := strings.TrimSpace(ojson.Get(metadata, "turn_id").String()); id != "" {
 			return "codex:" + id
 		}
 	}
@@ -39,7 +39,7 @@ func requestTurnKey(opts cliproxyexecutor.Options, payload []byte) string {
 	}
 	count := 0
 	last := ""
-	for _, message := range gjson.GetBytes(payload, "messages").Array() {
+	for _, message := range ojson.GetBytes(payload, "messages").Array() {
 		if message.Get("role").String() != "user" {
 			continue
 		}

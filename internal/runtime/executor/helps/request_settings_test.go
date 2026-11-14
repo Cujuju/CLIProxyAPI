@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	responsesclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/claude/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
-	"github.com/tidwall/sjson"
 )
 
 func TestRequestSettingsTranslatedClaude(t *testing.T) {
@@ -16,7 +16,7 @@ func TestRequestSettingsTranslatedClaude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err = sjson.SetBytes(body, "thinking", map[string]any{"type": "enabled", "budget_tokens": 1024})
+	body, err = ojson.SetBytes(body, "thinking", map[string]any{"type": "enabled", "budget_tokens": 1024})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -75,8 +75,8 @@ func TestClassifyQuotaExhaustion_UnavailablePoolReportsReset(t *testing.T) {
 	if statusCodeFromError(err) != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", statusCodeFromError(err))
 	}
-	headers := http.Header{}
-	CopySafeErrorHeaders(headers, err)
+	// Claude's unified headers ride upstream's Headers(), which handlers send with passthrough-headers.
+	headers := err.(interface{ Headers() http.Header }).Headers()
 	if got := headers.Get(claudeUnifiedSignalPrefix + "Reset"); got != strconv.FormatInt(reset.Unix(), 10) {
 		t.Fatalf("client reset header = %q, want %d (headers %v)", got, reset.Unix(), headers)
 	}

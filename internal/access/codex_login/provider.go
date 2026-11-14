@@ -10,7 +10,6 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/base64"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"

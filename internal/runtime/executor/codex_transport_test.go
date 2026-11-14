@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -16,7 +17,6 @@ import (
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	translator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 type transportUsageSink struct {
@@ -274,7 +274,7 @@ func TestCodexTransportDuplexPartialSuccessor(t *testing.T) {
 				t.Fatal(err)
 			}
 			for chunk := range result.Chunks {
-				kind := gjson.GetBytes(chunk.Payload, "type").String()
+				kind := ojson.GetBytes(chunk.Payload, "type").String()
 				if pendingDisconnect && kind == "response.created" {
 					input <- core.WebsocketInput{Payload: []byte(`{"type":"response.create","model":"gpt-test","input":[]}`)}
 				}

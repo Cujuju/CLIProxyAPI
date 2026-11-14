@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	cliproxysession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
-	"github.com/tidwall/gjson"
 )
 
 // Moving a conversation off its spent credential re-sends the whole context without the prompt
@@ -91,7 +91,7 @@ func (s *SessionAffinitySelector) heldUsageLimit(opts cliproxyexecutor.Options, 
 // asks for none (including non-Claude bodies, which declare no lifetime).
 func declaredPromptCacheLifetime(body []byte) time.Duration {
 	var longest time.Duration
-	note := func(control gjson.Result) {
+	note := func(control ojson.Result) {
 		if !control.Exists() {
 			return
 		}
@@ -101,17 +101,17 @@ func declaredPromptCacheLifetime(body []byte) time.Duration {
 		}
 		longest = max(longest, lifetime)
 	}
-	eachCacheControl := func(list gjson.Result) {
-		list.ForEach(func(_, item gjson.Result) bool {
+	eachCacheControl := func(list ojson.Result) {
+		list.ForEach(func(_, item ojson.Result) bool {
 			note(item.Get("cache_control"))
 			return true
 		})
 	}
-	root := gjson.ParseBytes(body)
+	root := ojson.ParseBytes(body)
 	note(root.Get("cache_control"))
 	eachCacheControl(root.Get("system"))
 	eachCacheControl(root.Get("tools"))
-	root.Get("messages").ForEach(func(_, message gjson.Result) bool {
+	root.Get("messages").ForEach(func(_, message ojson.Result) bool {
 		eachCacheControl(message.Get("content"))
 		return true
 	})
@@ -143,6 +143,6 @@ func (m *Manager) sessionHoldLimit(opts cliproxyexecutor.Options, providers []st
 		return nil
 	}
 	usageLimit := newModelCooldownError(model, "", limit.ResetsAt.Sub(now))
-	usageLimit.usageLimit = limit
+	usageLimit.setUsageLimit(limit)
 	return usageLimit
 }

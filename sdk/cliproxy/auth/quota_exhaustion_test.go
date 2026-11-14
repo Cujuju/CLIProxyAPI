@@ -85,8 +85,8 @@ func TestModelCooldownError_UsageLimitContract(t *testing.T) {
 	}
 	err.usageLimit = quotaLimit{ResetsAt: resetsAt}
 	headers := err.Headers()
-	if headers.Get("Retry-After") != "" || headers.Get(HeaderShouldRetry) != "false" {
-		t.Fatalf("usage limit headers = %v, want no Retry-After and X-Should-Retry: false", headers)
+	if headers.Get(HeaderShouldRetry) != "false" || headers.Get("Retry-After") != strconv.FormatInt(err.resetSeconds(), 10) {
+		t.Fatalf("usage limit headers = %v, want X-Should-Retry: false and the cooldown's Retry-After", headers)
 	}
 	if err.StatusCode() != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", err.StatusCode())

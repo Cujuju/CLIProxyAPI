@@ -98,31 +98,6 @@ func TestParsePluginExecutorResponseUsageResponsesShapes(t *testing.T) {
 	}
 }
 
-func TestMergeStreamUsageDetailRetainsCacheCreationSplitsWithTotal(t *testing.T) {
-	for _, reported := range []bool{false, true} {
-		for _, tokens := range []int64{0, 7} {
-			t.Run(fmt.Sprintf("reported_%t_subset_%d", reported, tokens), func(t *testing.T) {
-				existing := usage.Detail{
-					CacheCreationTokens:       9,
-					CacheCreation1hTokens:     tokens,
-					CacheCreation1hReported:   reported,
-					CacheCreationLongTokens:   tokens,
-					CacheCreationLongReported: reported,
-				}
-				merged := MergeStreamUsageDetail(existing, usage.Detail{
-					CacheCreation1hReported:   true,
-					CacheCreationLongReported: true,
-				})
-				if merged.CacheCreationTokens != existing.CacheCreationTokens ||
-					merged.CacheCreation1hTokens != tokens || merged.CacheCreation1hReported != reported ||
-					merged.CacheCreationLongTokens != tokens || merged.CacheCreationLongReported != reported {
-					t.Fatalf("merged = %+v, want retained total and subsets %+v", merged, existing)
-				}
-			})
-		}
-	}
-}
-
 func TestObservePluginExecutorStreamUsageRetainsClaudeCacheCreationSplitWithTotal(t *testing.T) {
 	for _, tokens := range []int64{0, 7} {
 		t.Run(fmt.Sprintf("subset_%d", tokens), func(t *testing.T) {
@@ -131,7 +106,7 @@ func TestObservePluginExecutorStreamUsageRetainsClaudeCacheCreationSplitWithTota
 			ObservePluginExecutorStreamUsage("claude", []byte(start), &buffer)
 			ObservePluginExecutorStreamUsage("claude", []byte(`data: {"type":"message_delta","usage":{"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_1h_input_tokens":0},"output_tokens":5}}`), &buffer)
 			detail, ok := buffer.Detail()
-			if !ok || detail.CacheCreationTokens != 9 || !detail.CacheCreation1hReported || detail.CacheCreation1hTokens != tokens || detail.OutputTokens != 5 {
+			if !ok || detail.CacheCreationTokens != 9 || detail.CacheCreation1hTokens == nil || *detail.CacheCreation1hTokens != tokens || detail.OutputTokens != 5 {
 				t.Fatalf("detail = %+v, ok = %v, want total 9 and reported subset %d", detail, ok, tokens)
 			}
 		})

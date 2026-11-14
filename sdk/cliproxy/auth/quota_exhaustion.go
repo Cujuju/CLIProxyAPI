@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
-	"github.com/tidwall/gjson"
 )
 
 // Usage-limit responses (upstream router-for-me#6646). When every eligible credential is out of
-// quota by explicit upstream evidence, the pool cooldown is final until a reset, so clients must
-// not retry or sleep on a multi-hour Retry-After.
+// quota by explicit upstream evidence, the pool cooldown is final until a reset: X-Should-Retry
+// false stops SDK retries, and Retry-After plus the reset headers say when to return.
 
 // usageLimitErrorType is the OpenAI-style error type clients show as "usage limit reached".
 const usageLimitErrorType = "usage_limit_reached"
@@ -44,6 +44,20 @@ type quotaLimit struct {
 	// Window is the length of the spent window that sets ResetsAt; zero when the evidence is an
 	// error code or the window length is unknown.
 	Window time.Duration
+	// claude marks a pool of only Claude credentials; claudeSignals are the unified headers the
+	// first-recovering one last received, nil when none were recorded.
+	claude        bool
+	claudeSignals map[string]string
+}
+
+// setUsageLimit marks e a final usage limit. A Claude pool also gets upstream's unified-header
+// cooldown so Headers() describes it, unless selection already attached Claude metadata.
+func (e *modelCooldownError) setUsageLimit(limit quotaLimit) {
+	e.usageLimit = limit
+	if limit.claude && !e.claudeCooldown {
+		e.claudeCooldown = true
+		e.claudeSignals = limit.claudeSignals
+	}
 }
 
 // classifyQuotaExhaustion turns a selection failure into a final usage limit when the pool is
@@ -60,12 +74,12 @@ func (m *Manager) classifyQuotaExhaustion(err error, providers []string, model s
 		return err
 	}
 	if isCooldown {
-		cooldown.usageLimit = limit
+		cooldown.setUsageLimit(limit)
 		return err
 	}
 	// Spent credentials beside ones blocked for other reasons select as unavailable (503).
 	usageLimit := newModelCooldownErrorWithCause(model, "", time.Until(limit.ResetsAt), err)
-	usageLimit.usageLimit = limit
+	usageLimit.setUsageLimit(limit)
 	return usageLimit
 }
 
@@ -79,7 +93,9 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 	}
 	reg := registry.GetGlobalRegistry()
 	var earliest quotaLimit
+	var earliestAuth *Auth
 	var otherRecovery time.Time
+	allClaude := true
 	for _, auth := range auths {
 		if auth == nil || auth.Disabled || auth.Status == StatusDisabled {
 			continue
@@ -87,9 +103,10 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 		if _, ok := wanted[canonicalSchedulingProvider(auth.Provider)]; !ok || !reg.ClientSupportsModel(auth.ID, model) {
 			continue
 		}
+		allClaude = allClaude && executorKeyFromAuth(auth) == "claude"
 		if limit, exhausted := credentialQuotaLimit(auth, model, now); exhausted {
 			if earliest.ResetsAt.IsZero() || limit.ResetsAt.Before(earliest.ResetsAt) {
-				earliest = limit
+				earliest, earliestAuth = limit, auth
 			}
 			continue
 		}
@@ -108,6 +125,12 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 	}
 	if earliest.ResetsAt.IsZero() || (!otherRecovery.IsZero() && otherRecovery.Before(earliest.ResetsAt)) {
 		return quotaLimit{}, false
+	}
+	earliest.claude = allClaude
+	if allClaude {
+		if observed, signals := claudeUnifiedCooldownForAuth(earliestAuth, model, now); observed {
+			earliest.claudeSignals = signals
+		}
 	}
 	return earliest, true
 }
@@ -165,7 +188,7 @@ func (m *Manager) finalUsageLimitError(err error, providers []string, model stri
 		return err, false
 	}
 	usageLimit := newModelCooldownErrorWithCause(model, "", time.Until(limit.ResetsAt), err)
-	usageLimit.usageLimit = limit
+	usageLimit.setUsageLimit(limit)
 	return usageLimit, true
 }
 
@@ -191,10 +214,10 @@ func isExplicitQuotaErrorBody(body string) bool {
 	if start := strings.IndexByte(body, '{'); start > 0 {
 		body = body[start:]
 	}
-	if !gjson.Valid(body) {
+	if !ojson.Valid(body) {
 		return false
 	}
-	parsed := gjson.Parse(body)
+	parsed := ojson.Parse(body)
 	for _, path := range []string{"error.type", "error.code", "type", "code"} {
 		if _, ok := explicitQuotaErrorCodes[strings.ToLower(strings.TrimSpace(parsed.Get(path).String()))]; ok {
 			return true
@@ -203,57 +226,16 @@ func isExplicitQuotaErrorBody(body string) bool {
 	return false
 }
 
-// Claude Code and Codex build their rate-limit state from response headers, never the body, and
-// hosts such as T3 Code schedule a resume from that state. A usage-limit 429 therefore repeats
-// the pool's reset in each client's own header family.
-const (
-	codexSignalPrefix      = "X-Codex-"
-	claudeFiveHourClaim    = "five_hour"
-	claudeWeeklyClaim      = "seven_day"
-	claudeSpentUtilization = "1"
-)
+// Codex builds its rate-limit state from response headers, and hosts such as T3 Code schedule a
+// resume from that state. A usage-limit 429 without recorded Codex signals to replay therefore
+// repeats the pool's reset as Codex's headers, on the passthrough-gated Headers() path.
+const codexSignalPrefix = "X-Codex-"
 
-// usageLimitHeaderPrefixes are the header families setUsageLimitClientHeaders writes.
-var usageLimitHeaderPrefixes = []string{claudeUnifiedSignalPrefix, codexSignalPrefix}
-
-// setUsageLimitClientHeaders describes the credential that recovers first as one spent window.
-func setUsageLimitClientHeaders(headers http.Header, limit quotaLimit, now time.Time) {
-	reset := strconv.FormatInt(limit.ResetsAt.Unix(), 10)
-	claim, token := claudeClaimFor(limit, now)
-	headers.Set(claudeUnifiedSignalPrefix+"Status", quotaWindowRejectedStatus)
-	headers.Set(claudeUnifiedSignalPrefix+"Reset", reset)
-	headers.Set(claudeUnifiedSignalPrefix+"Representative-Claim", claim)
-	headers.Set(claudeUnifiedSignalPrefix+token+"-Status", quotaWindowRejectedStatus)
-	headers.Set(claudeUnifiedSignalPrefix+token+"-Reset", reset)
-	headers.Set(claudeUnifiedSignalPrefix+token+"-Utilization", claudeSpentUtilization)
-
+// setUsageLimitCodexHeaders describes the credential that recovers first as one spent window.
+func setUsageLimitCodexHeaders(headers http.Header, limit quotaLimit) {
 	headers.Set(codexSignalPrefix+"Primary-Used-Percent", strconv.Itoa(fullWindowPercent))
-	headers.Set(codexSignalPrefix+"Primary-Reset-At", reset)
+	headers.Set(codexSignalPrefix+"Primary-Reset-At", strconv.FormatInt(limit.ResetsAt.Unix(), 10))
 	if limit.Window > 0 {
 		headers.Set(codexSignalPrefix+"Primary-Window-Minutes", strconv.Itoa(int(limit.Window/time.Minute)))
 	}
-}
-
-// claudeClaimFor names the limit as Claude does: five-hour or weekly. Without a window length, a
-// reset more than five hours away can only be weekly; nearer ones read as five-hour (label only).
-func claudeClaimFor(limit quotaLimit, now time.Time) (claim, token string) {
-	window := limit.Window
-	if window <= 0 {
-		window = limit.ResetsAt.Sub(now)
-	}
-	if window > fiveHourWindow {
-		return claudeWeeklyClaim, claudeWeeklyToken
-	}
-	return claudeFiveHourClaim, claudeFiveHourToken
-}
-
-// isUsageLimitHeader reports whether name belongs to a family setUsageLimitClientHeaders writes.
-func isUsageLimitHeader(name string) bool {
-	canonical := http.CanonicalHeaderKey(name)
-	for _, prefix := range usageLimitHeaderPrefixes {
-		if strings.HasPrefix(canonical, prefix) {
-			return true
-		}
-	}
-	return false
 }

@@ -131,12 +131,8 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 	if record.Detail.ReasoningTokensReported {
 		event.ReasoningTokens = &record.Detail.ReasoningTokens
 	}
-	if record.Detail.CacheCreation1hReported {
-		event.CacheWrite1h = &record.Detail.CacheCreation1hTokens
-	}
-	if record.Detail.CacheCreationLongReported {
-		event.CacheWriteLong = &record.Detail.CacheCreationLongTokens
-	}
+	event.CacheWrite1h = coreusage.CloneInt64Ptr(record.Detail.CacheCreation1hTokens)
+	event.CacheWriteLong = coreusage.CloneInt64Ptr(record.Detail.CacheCreation12hTokens)
 	switch record.ResponseServiceTier {
 	case "default", "standard":
 		event.Tier = "standard"

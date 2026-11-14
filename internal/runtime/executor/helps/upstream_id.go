@@ -3,7 +3,7 @@ package helps
 import (
 	"bytes"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // extractUpstreamID reads only response-level identifiers, never event or output-item IDs.
@@ -15,8 +15,8 @@ func extractUpstreamID(payload []byte) string {
 	if !bytes.Contains(data, []byte(`"id"`)) && !bytes.Contains(data, []byte(`"responseId"`)) {
 		return ""
 	}
-	root := gjson.ParseBytes(data)
-	if !root.IsObject() || !gjson.ValidBytes(data) {
+	root := ojson.ParseBytes(data)
+	if !root.IsObject() || !ojson.ValidBytes(data) {
 		return ""
 	}
 	kind := root.Get("type").String()
@@ -30,7 +30,7 @@ func extractUpstreamID(payload []byte) string {
 		paths = append(paths, "response.id", "id", "interaction.id")
 	}
 	for _, path := range paths {
-		if id := root.Get(path); id.Type == gjson.String && id.String() != "" {
+		if id := root.Get(path); id.Type == ojson.String && id.String() != "" {
 			return id.String()
 		}
 	}

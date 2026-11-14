@@ -14,9 +14,12 @@ func TestDesktopEventBillingFields(t *testing.T) {
 	} {
 		for _, reported := range []bool{false, true} {
 			for _, tokens := range []int64{0, 7} {
+				var split *int64
+				if reported {
+					split = coreusage.Int64Ptr(tokens)
+				}
 				record := coreusage.Record{ServiceTier: "fast", EffectiveServiceTier: "fast", ResponseServiceTier: tc.upstream,
-					Detail: coreusage.Detail{CacheCreationTokens: 9, CacheCreation1hTokens: tokens, CacheCreation1hReported: reported,
-						CacheCreationLongTokens: tokens, CacheCreationLongReported: reported}}
+					Detail: coreusage.Detail{CacheCreationTokens: 9, CacheCreation1hTokens: split, CacheCreation12hTokens: split}}
 				data, err := json.Marshal(desktopEventFromRecord(record))
 				if err != nil {
 					t.Fatal(err)
