@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"io"
+	"net"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,12 +23,16 @@ import (
 func TestResponsesWebsocketCaptureFinalizesFromCloseHandshake(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
-		name     string
-		graceful bool
-		state    string
+		name           string
+		clientClose    bool
+		interruptedMsg bool
+		failCloseReply bool
+		state          string
 	}{
-		{"normal-close", true, "complete"},
-		{"interrupted-transport", false, "partial"},
+		{name: "normal-close", clientClose: true, state: "complete"},
+		{name: "interrupted-transport", state: "partial"},
+		{name: "close-during-message", clientClose: true, interruptedMsg: true, state: "partial"},
+		{name: "close-reply-failed", clientClose: true, failCloseReply: true, state: "partial"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spool := logging.NewDurableCaptureSpool(t.TempDir(), randBytesForCaptureTest(t))
@@ -48,7 +55,10 @@ func TestResponsesWebsocketCaptureFinalizesFromCloseHandshake(t *testing.T) {
 				middleware.CaptureAuthenticatedRequestBody(c)
 				h.ResponsesWebsocket(c)
 			})
-			server := httptest.NewServer(router)
+			server := httptest.NewUnstartedServer(router)
+			listener := &captureCloseTestListener{Listener: server.Listener}
+			server.Listener = listener
+			server.Start()
 			t.Cleanup(server.Close)
 			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", nil)
 			if err != nil {
@@ -66,9 +76,25 @@ func TestResponsesWebsocketCaptureFinalizesFromCloseHandshake(t *testing.T) {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				t.Fatal(err)
 			}
-			if tc.graceful {
+			fragment := []byte{0xfe, 0x00, 0x80}
+			if tc.interruptedMsg {
+				// A non-final client binary frame with a zero mask key.
+				header := []byte{websocket.BinaryMessage, 0x80 | byte(len(fragment)), 0, 0, 0, 0}
+				if _, err := conn.UnderlyingConn().Write(append(header, fragment...)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.clientClose {
+				listener.failWrites.Store(tc.failCloseReply)
 				if err := conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{}); err != nil {
 					t.Fatal(err)
+				}
+				wantCode := websocket.CloseNormalClosure
+				if tc.failCloseReply {
+					wantCode = websocket.CloseAbnormalClosure
+				}
+				if _, _, err := conn.ReadMessage(); !websocket.IsCloseError(err, wantCode) {
+					t.Fatalf("expected close code %d, got %v", wantCode, err)
 				}
 			} else {
 				_ = conn.Close()
@@ -78,15 +104,61 @@ func TestResponsesWebsocketCaptureFinalizesFromCloseHandshake(t *testing.T) {
 			case <-time.After(testWait):
 				t.Fatal("capture did not finalize")
 			}
-			events := spool.Page(0).Records
-			if len(events) != 4 || events[3].Event != "end" || events[3].State != tc.state {
-				t.Fatalf("expected %s terminal capture, got %+v", tc.state, events)
+			var events []logging.CaptureEvent
+			var after uint64
+			for {
+				page := spool.Page(after)
+				if page.Error != "" {
+					t.Fatal(page.Error)
+				}
+				events = append(events, page.Records...)
+				if len(page.Records) < logging.CapturePageRecords {
+					break
+				}
+				after = events[len(events)-1].Sequence
+			}
+			if len(events) < 4 {
+				t.Fatalf("expected completed journal, got %d records", len(events))
+			}
+			if terminal := events[len(events)-1]; terminal.Event != "end" || terminal.State != tc.state {
+				t.Fatalf("expected %s terminal capture, got %s/%s (%s)", tc.state, terminal.Event, terminal.State, terminal.Reason)
 			}
 			if chunk := events[1].Chunk; chunk == nil || chunk.Type != "binary" || !bytes.Equal(chunk.Data, payload) {
 				t.Fatalf("binary request was not preserved: %+v", chunk)
 			}
+			if tc.interruptedMsg {
+				chunk := events[len(events)-2].Chunk
+				if chunk == nil || chunk.Type != "binary" || chunk.End || !bytes.Equal(chunk.Data, fragment) {
+					t.Fatalf("unfinished binary message was not preserved as partial: %+v", chunk)
+				}
+			}
 		})
 	}
+}
+
+type captureCloseTestListener struct {
+	net.Listener
+	failWrites atomic.Bool
+}
+
+func (l *captureCloseTestListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return captureCloseTestConn{Conn: conn, failWrites: &l.failWrites}, nil
+}
+
+type captureCloseTestConn struct {
+	net.Conn
+	failWrites *atomic.Bool
+}
+
+func (c captureCloseTestConn) Write(data []byte) (int, error) {
+	if c.failWrites.Load() {
+		return 0, io.ErrClosedPipe
+	}
+	return c.Conn.Write(data)
 }
 
 func randBytesForCaptureTest(t *testing.T) []byte {
