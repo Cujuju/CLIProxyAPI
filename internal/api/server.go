@@ -530,3 +530,11 @@ func (s *Server) Stop(ctx context.Context) error {
 	log.Debug("API server stopped")
 	return nil
 }
+
+// RegisterUsageLookup registers an additional desktop usage lookup on the management handler.
+func (s *Server) RegisterUsageLookup(lookup managementHandlers.UsageLookup) {
+	if s == nil || s.mgmt == nil || lookup == nil {
+		return
+	}
+	s.mgmt.RegisterUsageLookup(lookup)
+}

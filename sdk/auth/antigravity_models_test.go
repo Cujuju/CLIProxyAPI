@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNormalizeAntigravityModelID(t *testing.T) {
@@ -109,6 +110,45 @@ func TestParseAntigravityModelCapabilityHints(t *testing.T) {
 			t.Fatal("expected gemini-3-flash in WebSearchModelIDs after buffer mutation")
 		}
 	})
+}
+
+func TestParseAntigravityModelQuotas(t *testing.T) {
+	const reset = "2026-11-22T10:00:30.123456789-08:00"
+	body := []byte(`{"models":{
+		"  GEMINI-FLASH  ":{"displayName":"Gemini Flash","quotaInfo":{"remainingFraction":0.625,"resetTime":"` + reset + `"}},
+		"claude-omitted":{"quotaInfo":{"resetTime":"` + reset + `"}},
+		"gpt-zero":{"displayName":12,"quotaInfo":{"remainingFraction":0,"resetTime":"invalid"}},
+		"disabled":{"disabled":true,"quotaInfo":{"remainingFraction":1}},
+		"invalid":{"quotaInfo":{"remainingFraction":null,"resetTime":"` + reset + `"}},
+		"overflow":{"quotaInfo":{"remainingFraction":1e999}},
+		"negative":{"quotaInfo":{"remainingFraction":-0.1}},
+		"above-one":{"quotaInfo":{"remainingFraction":1.1}},
+		"quoted-nan":{"quotaInfo":{"remainingFraction":"NaN"}},
+		"missing":{"quotaInfo":{"resetTime":"invalid"}},
+		"not-object":{"quotaInfo":[]}
+	}}`)
+	hints, ok := ParseAntigravityModelCapabilityHints(body)
+	if !ok || len(hints.ModelQuotas) != 3 {
+		t.Fatalf("expected three valid quotas, got %+v", hints.ModelQuotas)
+	}
+	clear(body)
+	wantReset := time.Date(2026, 11, 22, 18, 0, 30, 123456789, time.UTC)
+	gemini := hints.ModelQuotas["gemini-flash"]
+	if gemini.ModelID != "gemini-flash" || gemini.DisplayName != "Gemini Flash" || gemini.RemainingFraction != 0.625 || !gemini.ResetTime.Equal(wantReset) {
+		t.Errorf("unexpected Gemini quota %+v", gemini)
+	}
+	claude := hints.ModelQuotas["claude-omitted"]
+	if claude.ModelID != "claude-omitted" || claude.RemainingFraction != 0 || !claude.ResetTime.Equal(wantReset) {
+		t.Errorf("unexpected proto3-omitted quota %+v", claude)
+	}
+	if gpt := hints.ModelQuotas["gpt-zero"]; gpt.ModelID != "gpt-zero" || gpt.DisplayName != "" || gpt.RemainingFraction != 0 || !gpt.ResetTime.IsZero() {
+		t.Errorf("unexpected explicit zero quota %+v", gpt)
+	}
+	cloned := hints.Clone()
+	delete(cloned.ModelQuotas, gemini.ModelID)
+	if _, exists := hints.ModelQuotas[gemini.ModelID]; !exists {
+		t.Error("clone shares the original model quotas map")
+	}
 }
 
 func TestPersistedAntigravityCapabilityHintsRoundTrip(t *testing.T) {

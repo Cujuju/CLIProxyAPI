@@ -364,12 +364,14 @@ type QuotaState struct {
 	// Cooldown transitions must use applyCooldownFields so they cannot replace
 	// this snapshot.
 	Signals map[string]string `json:"signals,omitempty"`
-	// LookedUpAt is when LookupSignals were fetched by an out-of-band usage lookup.
+	// LookedUpAt is when the out-of-band usage lookup snapshot was fetched.
 	LookedUpAt time.Time `json:"looked_up_at,omitempty"`
 	// LookupSignals is the latest usage lookup in the Signals header shape. A lookup
 	// reports windows that responses omit, so it is kept apart from Signals and
 	// only the next lookup replaces it. QuotaWindows composes both.
 	LookupSignals map[string]string `json:"lookup_signals,omitempty"`
+	// LookupWindows stores usage windows reported in normalized form.
+	LookupWindows []QuotaWindow `json:"lookup_windows,omitempty"`
 	// cooldownSignals retains rejected quota headers captured when the active
 	// cooldown was recorded so out-of-order completions cannot overwrite them.
 	cooldownSignals   map[string]string
@@ -381,6 +383,7 @@ func (q QuotaState) Clone() QuotaState {
 	copyQuota := q
 	copyQuota.Signals = cloneSignals(q.Signals)
 	copyQuota.LookupSignals = cloneSignals(q.LookupSignals)
+	copyQuota.LookupWindows = cloneQuotaWindows(q.LookupWindows)
 	copyQuota.cooldownSignals = cloneSignals(q.cooldownSignals)
 	return copyQuota
 }

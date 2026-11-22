@@ -3,6 +3,7 @@ package cliproxy
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"maps"
 	"math/rand/v2"
@@ -128,12 +129,17 @@ var (
 type antigravityModelCapabilityHints struct {
 	WebSearchModelIDs map[string]struct{}
 	// Nil means unknown; an empty non-nil set is an authoritative empty catalog.
-	ModelIDs map[string]struct{}
-	revision uint64
+	ModelIDs    map[string]struct{}
+	ModelQuotas map[string]sdkauth.AntigravityModelQuota
+	lookedUpAt  time.Time
+	revision    uint64
 }
 
 func (h antigravityModelCapabilityHints) clone() antigravityModelCapabilityHints {
-	return antigravityModelCapabilityHints{WebSearchModelIDs: maps.Clone(h.WebSearchModelIDs), ModelIDs: maps.Clone(h.ModelIDs), revision: h.revision}
+	h.WebSearchModelIDs = maps.Clone(h.WebSearchModelIDs)
+	h.ModelIDs = maps.Clone(h.ModelIDs)
+	h.ModelQuotas = maps.Clone(h.ModelQuotas)
+	return h
 }
 
 // antigravityCapabilityKey isolates catalogs by account, project, route and client
@@ -285,8 +291,16 @@ func (s *Service) fetchAntigravityModelCapabilityHintsForAuth(ctx context.Contex
 // Return the key captured with the HTTP User-Agent so publication cannot label a
 // result with a version resolved before or after the actual probe snapshot.
 func (s *Service) fetchAntigravityModelCapabilityHints(ctx context.Context, auth *coreauth.Auth) (string, antigravityModelCapabilityHints) {
+	key, hints, err := s.fetchAntigravityModelHints(ctx, auth, false)
+	if err == nil && len(hints.ModelQuotas) > 0 && s.coreManager != nil {
+		_ = s.recordAntigravityQuota(ctx, auth, key, AntigravityQuotaWindows(hints.ModelQuotas), hints.lookedUpAt)
+	}
+	return key, hints
+}
+
+func (s *Service) fetchAntigravityModelHints(ctx context.Context, auth *coreauth.Auth, forceRefresh bool) (string, antigravityModelCapabilityHints, error) {
 	if auth == nil || auth.Metadata == nil || isAntigravityAuthDisabled(auth) || s.antigravityHomeEnabled() {
-		return "", antigravityModelCapabilityHints{}
+		return "", antigravityModelCapabilityHints{}, errors.New("antigravity model probe unavailable for credential")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -296,13 +310,19 @@ func (s *Service) fetchAntigravityModelCapabilityHints(ctx context.Context, auth
 	cacheKey := antigravityCapabilityKeyForRoute(auth, baseURLs[0], proxyURL, userAgent)
 	accessToken, _ := auth.Metadata["access_token"].(string)
 	accessToken = strings.TrimSpace(accessToken)
-	if accessToken == "" || ctx.Err() != nil {
-		return cacheKey, s.cachedAntigravityHintsForKey(auth, baseURLs[0], cacheKey)
+	cached := func() antigravityModelCapabilityHints {
+		return s.cachedAntigravityHintsForKey(auth, baseURLs[0], cacheKey)
+	}
+	if err := ctx.Err(); err != nil {
+		return cacheKey, cached(), err
+	}
+	if accessToken == "" {
+		return cacheKey, cached(), errors.New("antigravity model probe requires an access token")
 	}
 	// Keep singleflight and transient/401 failure keys token-scoped, while 403 forbidden
 	// failures use cacheKey so routine access_token rotation does not reset backoff.
 	flightKey := antigravityTokenFailureKey(cacheKey, accessToken)
-	lookup := func() (antigravityModelCapabilityHints, bool) {
+	lookup := func() (antigravityModelCapabilityHints, bool, error) {
 		persisted, hasPersisted := s.persistedAntigravityHintsForAuth(auth, baseURLs[0])
 		antigravityCapabilityMu.Lock()
 		defer antigravityCapabilityMu.Unlock()
@@ -316,20 +336,27 @@ func (s *Service) fetchAntigravityModelCapabilityHints(ctx context.Context, auth
 			entry.lastUsed = now
 			antigravityCapabilityCache[cacheKey] = entry
 		}
-		return entry.hints.clone(), now.Before(entry.expiresAt) || now.Before(antigravityFailureNextRetryLocked(cacheKey, flightKey))
+		if retry := antigravityFailureNextRetryLocked(cacheKey, flightKey); now.Before(retry) {
+			return entry.hints.clone(), true, fmt.Errorf("antigravity model probe in backoff until %s", retry.UTC().Format(time.RFC3339))
+		}
+		return entry.hints.clone(), !forceRefresh && now.Before(entry.expiresAt), nil
 	}
-	if hints, cached := lookup(); cached {
-		return cacheKey, hints
+	if hints, skip, err := lookup(); skip {
+		return cacheKey, hints, err
 	}
 	// The initiating caller owns the shared HTTP operation. Followers may cancel
 	// their own wait without canceling that operation or blocking a refresh worker.
-	resultCh := antigravityCapabilityGroup.DoChan(flightKey, func() (any, error) {
-		if hints, cached := lookup(); cached {
-			return hints, nil
+	probe := func() (any, error) {
+		if hints, skip, err := lookup(); skip {
+			if err != nil {
+				return hints, err
+			}
+			// Signal a cache-only flight so a forced follower can still probe.
+			return nil, nil
 		}
 		ctx, finish, active := s.beginAntigravityAccountProbe(ctx, auth, cacheKey, flightKey, accessToken)
 		if !active {
-			return s.cachedAntigravityHintsForKey(auth, baseURLs[0], cacheKey), nil
+			return cached(), errors.New("antigravity model probe credential is no longer current")
 		}
 		defer finish()
 		revision := antigravityProbeSequence.Add(1)
@@ -350,16 +377,18 @@ func (s *Service) fetchAntigravityModelCapabilityHints(ctx context.Context, auth
 		select {
 		case antigravityProbeSlots <- struct{}{}:
 		case <-ctx.Done():
-			hints, _ := lookup()
-			return hints, nil
+			return cached(), ctx.Err()
 		}
 		defer func() { <-antigravityProbeSlots }()
 		hints, status := s.probeAntigravityModelCapabilityHints(ctx, auth, baseURLs, proxyURL, accessToken, userAgent)
 		antigravityCapabilityMu.Lock()
 		defer antigravityCapabilityMu.Unlock()
 		current := antigravityCapabilityCache[cacheKey]
-		if ctx.Err() != nil || current.probeRevision != revision {
-			return current.hints.clone(), nil
+		if err := ctx.Err(); err != nil {
+			return current.hints.clone(), err
+		}
+		if current.probeRevision != revision {
+			return current.hints.clone(), errors.New("antigravity model probe was superseded")
 		}
 		now := antigravityNowFunc()
 		for key, other := range antigravityCapabilityCache {
@@ -374,19 +403,23 @@ func (s *Service) fetchAntigravityModelCapabilityHints(ctx context.Context, auth
 		}
 		if status == antigravityProbeStatusSuccess && hints.ModelIDs != nil {
 			hints.revision = revision
-			current.hints, current.expiresAt, current.lastUsed = hints.clone(), now.Add(antigravityCapabilityCacheTTL), now
+			current.hints, current.expiresAt, current.lastUsed = hints, now.Add(antigravityCapabilityCacheTTL), now
+			current.hints.ModelQuotas = nil
 			antigravityCapabilityCache[cacheKey] = current
 			delete(antigravityAuthFailureCache, flightKey)
 			delete(antigravityAuthFailureCache, cacheKey)
 			return hints, nil
 		}
+		probeErr := errors.New("antigravity model probe did not return a catalog")
 		switch status {
 		case antigravityProbeStatusForbidden:
 			// 403 forbidden failures persist across routine access_token rotation via cacheKey.
 			antigravityAuthFailureCache[cacheKey] = nextAntigravityForbiddenFailure(antigravityAuthFailureCache[cacheKey], now, rand.Int64N)
+			probeErr = errors.New("antigravity model probe forbidden (403)")
 		case antigravityProbeStatusAuthError:
 			// 401 unauthorized failures back off longer for the same token while retrying immediately on token refresh.
 			antigravityAuthFailureCache[flightKey] = nextAntigravityAuthErrorFailure(antigravityAuthFailureCache[flightKey], now, rand.Int64N)
+			probeErr = errors.New("antigravity model probe unauthorized (401)")
 		default:
 			// Missing models (including legacy capability-only responses) and transient errors
 			// are not a successful catalog. Preserve last success and increase the jittered backoff.
@@ -396,18 +429,21 @@ func (s *Service) fetchAntigravityModelCapabilityHints(ctx context.Context, auth
 		if status == antigravityProbeStatusSuccess && len(hints.WebSearchModelIDs) > 0 {
 			retained.WebSearchModelIDs = hints.WebSearchModelIDs
 		}
-		return retained, nil
-	})
-	select {
-	case <-ctx.Done():
-		hints, _ := lookup()
-		return cacheKey, hints
-	case result := <-resultCh:
-		if result.Err != nil || result.Val == nil {
-			hints, _ := lookup()
-			return cacheKey, hints
+		return retained, probeErr
+	}
+	for {
+		resultCh := antigravityCapabilityGroup.DoChan(flightKey, probe)
+		select {
+		case <-ctx.Done():
+			return cacheKey, cached(), ctx.Err()
+		case result := <-resultCh:
+			if result.Val != nil {
+				return cacheKey, result.Val.(antigravityModelCapabilityHints).clone(), result.Err
+			}
+			if !forceRefresh {
+				return cacheKey, cached(), result.Err
+			}
 		}
-		return cacheKey, result.Val.(antigravityModelCapabilityHints).clone()
 	}
 }
 
@@ -416,6 +452,7 @@ func (s *Service) probeAntigravityModelCapabilityHints(ctx context.Context, auth
 	if auth != nil && auth.Metadata != nil {
 		project, _ = auth.Metadata["project_id"].(string)
 	}
+	lookedUpAt := antigravityNowFunc()
 	hints, status := sdkauth.FetchAntigravityAvailableModels(ctx, sdkauth.AntigravityModelProbeRequest{
 		BaseURLs:    baseURLs,
 		ProxyURL:    proxyURL,
@@ -426,6 +463,8 @@ func (s *Service) probeAntigravityModelCapabilityHints(ctx context.Context, auth
 	return antigravityModelCapabilityHints{
 		ModelIDs:          hints.ModelIDs,
 		WebSearchModelIDs: hints.WebSearchModelIDs,
+		ModelQuotas:       hints.ModelQuotas,
+		lookedUpAt:        lookedUpAt,
 	}, status
 }
 
@@ -494,6 +533,7 @@ func parseAntigravityModelCapabilityHints(body []byte) (antigravityModelCapabili
 	return antigravityModelCapabilityHints{
 		ModelIDs:          hints.ModelIDs,
 		WebSearchModelIDs: hints.WebSearchModelIDs,
+		ModelQuotas:       hints.ModelQuotas,
 	}, true
 }
 
