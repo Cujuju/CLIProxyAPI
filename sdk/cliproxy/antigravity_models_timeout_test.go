@@ -328,7 +328,7 @@ func TestAntigravityAsyncProbe_UnregisteredClientNotResurrected(t *testing.T) {
 	probeStarted := make(chan struct{})
 	releaseProbe := make(chan struct{})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(antigravityCatalogHandler(func(w http.ResponseWriter, r *http.Request) {
 		close(probeStarted)
 		<-releaseProbe
 		w.WriteHeader(http.StatusOK)

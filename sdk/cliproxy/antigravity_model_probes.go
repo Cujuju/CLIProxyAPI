@@ -4,17 +4,32 @@ import (
 	"context"
 	"strings"
 
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 // antigravityModelRefreshRequest captures publication ownership at admission.
 // A queued successor must not adopt a later epoch from an external publisher.
 type antigravityModelRefreshRequest struct {
-	ctx           context.Context
-	auth          *coreauth.Auth
-	provider      string
-	registryEpoch uint64
-	refreshUsage  bool
+	ctx                context.Context
+	auth               *coreauth.Auth
+	provider           string
+	registryEpoch      uint64
+	routeKey           string
+	token              string
+	minCatalogRevision uint64
+	fallback           *antigravitySummaryFallback
+}
+
+type antigravitySummaryFallback struct {
+	ctx                context.Context
+	probe              sdkauth.AntigravityModelProbeRequest
+	summary            antigravityModelCapabilityHints
+	minCatalogRevision uint64
+}
+
+func (r *antigravityModelRefreshRequest) accountProbe() *antigravityAccountProbe {
+	return &antigravityAccountProbe{auth: r.auth, routeKey: r.routeKey, token: r.token}
 }
 
 type antigravityHintPersistRequest struct {
@@ -29,7 +44,19 @@ type antigravityHintPersistRequest struct {
 // queueAntigravityModelRefresh coalesces registration and periodic probes into
 // one worker per account. Repeated updates replace a single queued successor,
 // rather than accumulating singleflight followers while an upstream is stalled.
-func (s *Service) queueAntigravityModelRefresh(ctx context.Context, auth *coreauth.Auth, provider string, refreshUsage bool) {
+func (s *Service) queueAntigravityModelRefresh(ctx context.Context, auth *coreauth.Auth, provider string) {
+	if s != nil {
+		s.queueAntigravityRefresh(ctx, auth, provider, nil, &s.antigravityRefreshPending, s.executeAntigravityModelRefresh)
+	}
+}
+
+func (s *Service) queueAntigravitySummaryRefresh(ctx context.Context, auth *coreauth.Auth) {
+	if s != nil && s.coreManager != nil && s.NewAntigravityUsageLookup().Eligible(auth) {
+		s.queueAntigravityRefresh(ctx, auth, "", nil, &s.antigravitySummaryPending, s.executeAntigravitySummaryRefresh)
+	}
+}
+
+func (s *Service) queueAntigravityRefresh(ctx context.Context, auth *coreauth.Auth, provider string, fallback *antigravitySummaryFallback, pending *map[string]*antigravityModelRefreshRequest, execute func(context.Context, *antigravityModelRefreshRequest)) {
 	if s == nil || auth == nil || auth.ID == "" || isAntigravityAuthDisabled(auth) || s.antigravityHomeEnabled() {
 		return
 	}
@@ -48,82 +75,93 @@ func (s *Service) queueAntigravityModelRefresh(ctx context.Context, auth *coreau
 	request := &antigravityModelRefreshRequest{
 		ctx: ctx, auth: auth.Clone(), provider: provider,
 		registryEpoch: GlobalModelRegistry().ClientRegistrationEpoch(auth.ID),
-		refreshUsage:  refreshUsage,
+		routeKey:      s.antigravityCapabilityKey(auth), fallback: fallback,
 	}
 	token, _ := request.auth.Metadata["access_token"].(string)
-	probe := &antigravityAccountProbe{
-		auth: request.auth, routeKey: s.antigravityCapabilityKey(request.auth), token: strings.TrimSpace(token),
+	request.token = strings.TrimSpace(token)
+	if pending == &s.antigravitySummaryPending {
+		// A catalog completed after admission can satisfy this summary's fallback.
+		antigravityCapabilityMu.RLock()
+		request.minCatalogRevision = antigravityCapabilityCache[request.routeKey].hints.revision + 1
+		antigravityCapabilityMu.RUnlock()
+	}
+	if fallback != nil && (request.token != fallback.probe.AccessToken ||
+		request.routeKey != antigravityCapabilityKeyForRoute(auth, fallback.probe.BaseURLs, fallback.probe.ProxyURL, fallback.probe.UserAgent)) {
+		return
 	}
 	s.antigravityProbeMu.Lock()
 	// Late stale callers must not replace the latest queued auth snapshot.
-	if ctx.Err() != nil || !s.antigravityAccountProbeCurrent(probe) {
+	if ctx.Err() != nil || (lifetime != nil && lifetime.Err() != nil) || !s.antigravityAccountProbeCurrent(request.accountProbe()) {
 		s.antigravityProbeMu.Unlock()
 		return
 	}
-	if s.antigravityRefreshPending == nil {
-		s.antigravityRefreshPending = make(map[string]*antigravityModelRefreshRequest)
+	if *pending == nil {
+		*pending = make(map[string]*antigravityModelRefreshRequest)
 	}
-	queued, running := s.antigravityRefreshPending[auth.ID]
-	if queued != nil && queued.registryEpoch > request.registryEpoch {
-		// Concurrent registration callers can reach admission out of order.
-		s.antigravityProbeMu.Unlock()
-		return
+	queued, running := (*pending)[auth.ID]
+	if queued != nil && (queued.ctx.Err() == nil || queued.fallback != nil) && s.antigravityAccountProbeCurrent(queued.accountProbe()) {
+		// Preserve the newest registration and its publication epoch when coalescing fallback.
+		if queued.provider != "" && (provider == "" || queued.registryEpoch > request.registryEpoch) {
+			request = queued
+		} else if queued.fallback != nil {
+			request.fallback = queued.fallback
+		}
+		if fallback != nil && (request.fallback == nil ||
+			fallback.summary.lookedUpAt.After(request.fallback.summary.lookedUpAt) ||
+			(fallback.summary.lookedUpAt.Equal(request.fallback.summary.lookedUpAt) && fallback.summary.revision > request.fallback.summary.revision)) {
+			request.fallback = fallback
+		}
 	}
-	if queued != nil {
-		request.refreshUsage = request.refreshUsage || queued.refreshUsage
-	}
-	s.antigravityRefreshPending[auth.ID] = request
+	(*pending)[auth.ID] = request
 	if !running {
 		s.antigravityProbeWg.Add(1)
 	}
 	s.antigravityProbeMu.Unlock()
 	if !running {
-		go s.runAntigravityAccountRefresh(auth.ID)
+		go s.runAntigravityAccountRefresh(auth.ID, pending, execute)
 	}
 }
 
-func (s *Service) runAntigravityAccountRefresh(authID string) {
+func (s *Service) runAntigravityAccountRefresh(authID string, pending *map[string]*antigravityModelRefreshRequest, execute func(context.Context, *antigravityModelRefreshRequest)) {
 	defer s.antigravityProbeWg.Done()
 	defer s.signalAntigravityModelRefresh()
 	for {
 		s.antigravityProbeMu.Lock()
-		request := s.antigravityRefreshPending[authID]
+		request := (*pending)[authID]
 		if request == nil {
-			delete(s.antigravityRefreshPending, authID)
+			delete(*pending, authID)
 			s.antigravityProbeMu.Unlock()
 			return
 		}
-		s.antigravityRefreshPending[authID] = nil
+		(*pending)[authID] = nil
 		s.antigravityProbeMu.Unlock()
-		s.executeAntigravityModelRefresh(request)
+		s.executeAntigravityRefresh(request, execute)
+		if request.fallback != nil {
+			s.recordAntigravityBackgroundFallback(request)
+		}
 	}
 }
 
-func (s *Service) executeAntigravityModelRefresh(request *antigravityModelRefreshRequest) {
+func (s *Service) executeAntigravityRefresh(request *antigravityModelRefreshRequest, execute func(context.Context, *antigravityModelRefreshRequest)) {
 	if request.ctx.Err() != nil || pluginHostHasAuthModelProvider(s.pluginHost, request.auth.Provider) {
 		return
 	}
-	probeCtx, cancel := context.WithCancel(request.ctx)
-	defer cancel()
-	s.cfgMu.RLock()
-	lifetime := s.antigravityContext
-	s.cfgMu.RUnlock()
-	if lifetime != nil {
-		stop := context.AfterFunc(lifetime, cancel)
-		defer stop()
-		if lifetime.Err() != nil {
-			return
-		}
-	}
-	key := s.antigravityCapabilityKey(request.auth)
-	expectedKey, hints := s.probeAndRegisterAntigravityModels(probeCtx, request.auth, request.provider, request.auth.RegistrationEpoch, request.registryEpoch)
-	if hints.ModelIDs != nil {
-		s.queueAntigravityHintPersistence(request.ctx, request.auth, expectedKey, antigravityModelBaseURLs(request.auth)[0], hints)
-	}
-	if !request.refreshUsage || s.antigravityCapabilityKey(request.auth) != key {
+	// Track queued workers even when another caller owns their singleflight probe.
+	ctx, finish, active := s.beginAntigravityAccountProbe(request.ctx, request.auth, request.routeKey, "", request.token)
+	if !active {
 		return
 	}
-	s.refreshAntigravityBackgroundUsage(probeCtx, request.auth, expectedKey, hints)
+	defer finish()
+	execute(ctx, request)
+}
+
+func (s *Service) executeAntigravityModelRefresh(ctx context.Context, request *antigravityModelRefreshRequest) {
+	if request.provider != "" {
+		expectedKey, hints := s.probeAndRegisterAntigravityModels(ctx, request.auth, request.provider, request.auth.RegistrationEpoch, request.registryEpoch)
+		if hints.ModelIDs != nil {
+			s.queueAntigravityHintPersistence(request.ctx, request.auth, expectedKey, antigravityModelBaseURLs(request.auth)[0], hints)
+		}
+	}
 }
 
 // antigravityAccountProbe owns both queued and connected work for one auth snapshot.
@@ -359,6 +397,13 @@ func (s *Service) cancelStaleAntigravityProbes(authID string) {
 		return
 	}
 	s.antigravityProbeMu.Lock()
+	for _, pending := range []map[string]*antigravityModelRefreshRequest{s.antigravityRefreshPending, s.antigravitySummaryPending} {
+		for id, request := range pending {
+			if (authID == "" || id == authID) && request != nil && !s.antigravityAccountProbeCurrent(request.accountProbe()) {
+				pending[id] = nil
+			}
+		}
+	}
 	for id, probes := range s.antigravityAccountProbes {
 		if authID != "" && id != authID {
 			continue
@@ -368,7 +413,9 @@ func (s *Service) cancelStaleAntigravityProbes(authID string) {
 				probe.cancel()
 				// An updated snapshot with the same token may start immediately instead
 				// of joining an obsolete leader that is still unwinding its HTTP request.
-				antigravityCapabilityGroup.Forget(probe.flightKey)
+				if probe.flightKey != "" {
+					antigravityCapabilityGroup.Forget(probe.flightKey)
+				}
 				delete(probes, probe)
 			}
 		}

@@ -90,6 +90,9 @@ func TestAntigravityStalledAccountDoesNotBlockOtherRetries(t *testing.T) {
 		var calls, stalledCalls atomic.Int32
 		transport := http.DefaultTransport
 		http.DefaultTransport = antigravityReviewTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
+				return antigravityVersionTestResponse(r, http.StatusServiceUnavailable, ""), nil
+			}
 			if strings.Contains(r.Header.Get("Authorization"), "refresh-stall") {
 				stalledCalls.Add(1)
 				<-r.Context().Done()
@@ -135,6 +138,9 @@ func TestAntigravityPluginRefreshDoesNotWaitForProbe(t *testing.T) {
 		started := make(chan struct{})
 		transport := http.DefaultTransport
 		http.DefaultTransport = antigravityReviewTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
+				return antigravityVersionTestResponse(r, http.StatusServiceUnavailable, ""), nil
+			}
 			close(started)
 			<-r.Context().Done()
 			return nil, r.Context().Err()
@@ -184,6 +190,9 @@ func TestAntigravityRefreshBoundsQueuedWorkAndCancels(t *testing.T) {
 		var calls atomic.Int32
 		transport := http.DefaultTransport
 		http.DefaultTransport = antigravityReviewTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
+				return antigravityVersionTestResponse(r, http.StatusServiceUnavailable, ""), nil
+			}
 			calls.Add(1)
 			<-r.Context().Done()
 			return nil, r.Context().Err()
@@ -238,6 +247,9 @@ func TestAntigravityShutdownCancelsServiceProbes(t *testing.T) {
 		started := make(chan struct{})
 		transport := http.DefaultTransport
 		http.DefaultTransport = antigravityReviewTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
+				return antigravityVersionTestResponse(r, http.StatusServiceUnavailable, ""), nil
+			}
 			close(started)
 			<-r.Context().Done()
 			return nil, r.Context().Err()

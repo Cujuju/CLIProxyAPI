@@ -208,7 +208,7 @@ func TestAntigravityDynamicRegistrationDropsStaleFullCatalog(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
 	defer unblock()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(antigravityCatalogHandler(func(w http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-release
 		_, _ = w.Write([]byte(`{"models":{"gemini-3.1-flash-lite":{}}}`))
