@@ -2,6 +2,8 @@ package claudeusage
 
 import (
 	"fmt"
+	"net/http"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -9,15 +11,12 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
-func TestHeadersFromUsageExactDecimalPercent(t *testing.T) {
+func TestWindowsFromUsageExactDecimalPercent(t *testing.T) {
 	for _, percent := range []float64{57, 55, 42.37, 0.7} {
-		headers, err := HeadersFromUsage([]byte(fmt.Sprintf(`{"seven_day":{"utilization":%s}}`, strconv.FormatFloat(percent, 'f', -1, 64))))
+		windows, err := WindowsFromUsage([]byte(fmt.Sprintf(`{"seven_day":{"utilization":%s}}`, strconv.FormatFloat(percent, 'f', -1, 64))))
 		if err != nil {
 			t.Fatal(err)
 		}
-		a := &coreauth.Auth{Provider: "claude"}
-		a.Quota.ObserveLookupForProvider("claude", headers, time.Now())
-		windows := coreauth.QuotaWindows(a, time.Now())
 		if len(windows) != 1 || windows[0].UsedPercent == nil {
 			t.Fatal("missing utilization")
 		}
@@ -41,49 +40,53 @@ const usageDocument = `{
   ]
 }`
 
-func TestHeadersFromUsage(t *testing.T) {
-	headers, err := HeadersFromUsage([]byte(usageDocument))
+func TestWindowsFromUsage(t *testing.T) {
+	windows, err := WindowsFromUsage([]byte(usageDocument))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{
-		"Anthropic-Ratelimit-Unified-5h-Utilization":             "0.12",
-		"Anthropic-Ratelimit-Unified-5h-Status":                  "allowed",
-		"Anthropic-Ratelimit-Unified-7d-Utilization":             "0.41",
-		"Anthropic-Ratelimit-Unified-7d-Status":                  "allowed_warning",
-		"Anthropic-Ratelimit-Unified-7d_oi-Status":               "rejected",
-		"Anthropic-Ratelimit-Unified-Iguana_necktie-Utilization": "0.1999",
-		"Anthropic-Ratelimit-Unified-Iguana_necktie-Label":       "Spend limit $250",
-		"Anthropic-Ratelimit-Unified-7d-Reset":                   unix("2026-10-29T09:00:00Z"),
-		"Anthropic-Ratelimit-Unified-5h-Reset":                   unix("2026-10-25T18:00:00Z"),
+	legacy := http.Header{
+		"Anthropic-Ratelimit-Unified-5h-Utilization":             {"0.12"},
+		"Anthropic-Ratelimit-Unified-5h-Status":                  {"allowed"},
+		"Anthropic-Ratelimit-Unified-7d-Utilization":             {"0.41"},
+		"Anthropic-Ratelimit-Unified-7d-Status":                  {"allowed_warning"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Utilization":          {"1"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Status":               {"rejected"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Reset":                {unix("2026-10-30T09:00:00Z")},
+		"Anthropic-Ratelimit-Unified-Iguana_necktie-Utilization": {"0.1999"},
+		"Anthropic-Ratelimit-Unified-Iguana_necktie-Label":       {"Spend limit $250"},
+		"Anthropic-Ratelimit-Unified-Iguana_necktie-Reset":       {unix("2026-11-05T00:00:00Z")},
+		"Anthropic-Ratelimit-Unified-7d-Reset":                   {unix("2026-10-29T09:00:00Z")},
+		"Anthropic-Ratelimit-Unified-5h-Reset":                   {unix("2026-10-25T18:00:00Z")},
 	}
-	for key, value := range want {
-		if got := headers.Get(key); got != value {
-			t.Errorf("%s = %q, want %q", key, got, value)
-		}
-	}
-	for _, key := range []string{"Anthropic-Ratelimit-Unified-Extra_usage-Utilization", "Anthropic-Ratelimit-Unified-Seven_day_oauth_apps-Utilization"} {
-		if headers.Get(key) != "" {
-			t.Errorf("%s should be absent", key)
-		}
+	now := time.Now()
+	a := &coreauth.Auth{Provider: "claude"}
+	a.Quota.ObserveLookupForProvider("claude", legacy, now)
+	want := coreauth.QuotaWindows(a, now)
+	a.Quota.LookupSignals = nil
+	a.Quota.LookupWindows = windows
+	if got := coreauth.QuotaWindows(a, now); !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized windows = %+v, want %+v", got, want)
 	}
 }
 
-func TestHeadersFromUsageWithoutLimitsArray(t *testing.T) {
-	headers, err := HeadersFromUsage([]byte(`{"five_hour": {"utilization": 50, "resets_at": "2026-10-25T18:00:00Z"}}`))
+func TestWindowsFromUsageWithoutLimitsArray(t *testing.T) {
+	windows, err := WindowsFromUsage([]byte(`{"five_hour": {"utilization": 50, "resets_at": "2026-10-25T18:00:00Z"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if headers.Get("Anthropic-Ratelimit-Unified-5h-Utilization") != "0.5" || headers.Get("Anthropic-Ratelimit-Unified-5h-Reset") != unix("2026-10-25T18:00:00Z") {
-		t.Fatalf("headers = %v", headers)
+	if len(windows) != 1 || windows[0].Key != "five_hour" || windows[0].Status != "" ||
+		windows[0].UsedPercent == nil || *windows[0].UsedPercent != 50 ||
+		strconv.FormatInt(windows[0].ResetsAt.Unix(), 10) != unix("2026-10-25T18:00:00Z") {
+		t.Fatalf("windows = %+v", windows)
 	}
 }
 
-func TestHeadersFromUsageRejectsEmpty(t *testing.T) {
-	if _, err := HeadersFromUsage([]byte(`{"extra_usage": {"utilization": 3}}`)); err == nil {
+func TestWindowsFromUsageRejectsEmpty(t *testing.T) {
+	if _, err := WindowsFromUsage([]byte(`{"extra_usage": {"utilization": 3}}`)); err == nil {
 		t.Fatal("expected error for a document without usage windows")
 	}
-	if _, err := HeadersFromUsage([]byte(`not json`)); err == nil {
+	if _, err := WindowsFromUsage([]byte(`not json`)); err == nil {
 		t.Fatal("expected parse error")
 	}
 }

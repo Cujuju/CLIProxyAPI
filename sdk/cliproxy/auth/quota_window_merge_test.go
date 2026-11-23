@@ -1,10 +1,81 @@
 package auth
 
 import (
+	"maps"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 )
+
+func TestQuotaLookupWindowRoutingParity(t *testing.T) {
+	now := time.Unix(2_000_000_000, 0)
+	reset := now.Add(time.Hour)
+	resetRaw := strconv.FormatInt(reset.Unix(), 10)
+	for _, tc := range []struct {
+		provider string
+		account  map[string]string
+		scoped   map[string]string
+	}{
+		{"claude", map[string]string{
+			"Anthropic-Ratelimit-Unified-5h-Utilization": "1",
+			"Anthropic-Ratelimit-Unified-5h-Reset":       resetRaw,
+		}, map[string]string{
+			"Anthropic-Ratelimit-Unified-7d_oi-Utilization": "1",
+			"Anthropic-Ratelimit-Unified-7d_oi-Reset":       strconv.FormatInt(reset.Add(time.Hour).Unix(), 10),
+		}},
+		{"codex", map[string]string{
+			"X-Codex-Primary-Used-Percent":   "100",
+			"X-Codex-Primary-Window-Minutes": "300",
+			"X-Codex-Primary-Reset-At":       resetRaw,
+		}, map[string]string{
+			"X-Codex-Code-Review-Primary-Used-Percent":   "100",
+			"X-Codex-Code-Review-Primary-Window-Minutes": "300",
+			"X-Codex-Code-Review-Primary-Reset-At":       strconv.FormatInt(reset.Add(time.Hour).Unix(), 10),
+		}},
+	} {
+		for _, scenario := range []struct {
+			name       string
+			observedAt time.Time
+		}{
+			{"standalone", time.Time{}},
+			{"lookup newer", now.Add(-time.Minute)},
+			{"response newer", now.Add(time.Minute)},
+		} {
+			t.Run(tc.provider+"/"+scenario.name, func(t *testing.T) {
+				lookup := maps.Clone(tc.account)
+				maps.Copy(lookup, tc.scoped)
+				legacy := &Auth{Provider: tc.provider, Quota: QuotaState{LookedUpAt: now, LookupSignals: lookup}}
+				if !scenario.observedAt.IsZero() {
+					legacy.Quota.Signals = maps.Clone(tc.account)
+					maps.Copy(legacy.Quota.Signals, collectQuotaSignals(tc.provider, recoveryLookupHeaders(tc.provider, false)))
+					legacy.Quota.ObservedAt = scenario.observedAt
+				}
+				normalized := legacy.Clone()
+				normalized.Quota.LookupWindows = signalWindows(tc.provider, lookup, now)
+				normalized.Quota.LookupSignals = nil
+
+				wantWindows := QuotaWindows(legacy, now)
+				if got := QuotaWindows(normalized, now); !reflect.DeepEqual(got, wantWindows) {
+					t.Fatalf("normalized windows = %+v, want %+v", got, wantWindows)
+				}
+				wantCount := 2
+				if !scenario.observedAt.IsZero() {
+					wantCount++
+				}
+				if len(wantWindows) != wantCount || !wantWindows[len(wantWindows)-1].Scoped {
+					t.Fatalf("expected %d windows with scoped window last: %+v", wantCount, wantWindows)
+				}
+				wantLimit := quotaLimit{ResetsAt: reset, Window: fiveHourWindow}
+				for _, auth := range []*Auth{legacy, normalized} {
+					if limit, ok := credentialQuotaLimit(auth, "", now); !ok || !reflect.DeepEqual(limit, wantLimit) {
+						t.Fatalf("credential quota limit = %+v, %v, want %+v", limit, ok, wantLimit)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestQuotaWindowsMergeClaude(t *testing.T) {
 	now := time.Date(2026, time.October, 31, 12, 0, 0, 0, time.UTC)

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestQuotaWindowsStructuredLookupFallback(t *testing.T) {
+func TestQuotaWindowsPrefersStructuredLookup(t *testing.T) {
 	percent := 42.0
 	auth := &Auth{Provider: "claude", Quota: QuotaState{LookupWindows: []QuotaWindow{
 		{Key: "scoped", Scoped: true},
@@ -36,8 +36,12 @@ func TestQuotaWindowsStructuredLookupFallback(t *testing.T) {
 		t.Fatalf("source windows changed: %+v, usage = %v", auth.Quota.LookupWindows, percent)
 	}
 	auth.Quota.LookupSignals = map[string]string{"Anthropic-Ratelimit-Unified-7d-Utilization": "0.4"}
+	if windows = QuotaWindows(auth, now); len(windows) != len(want) || windows[0].Key != want[0] {
+		t.Fatalf("expected normalized windows to take precedence: %+v", windows)
+	}
+	auth.Quota.LookupWindows = nil
 	if windows = QuotaWindows(auth, now); len(windows) != 1 || windows[0].Key != "seven_day" {
-		t.Fatalf("signal-derived windows should take precedence: %+v", windows)
+		t.Fatalf("expected fallback to legacy signals: %+v", windows)
 	}
 }
 

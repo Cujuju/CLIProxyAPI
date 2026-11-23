@@ -3,21 +3,18 @@
 package claudeusage
 
 import (
-	"encoding/json"
 	"fmt"
-	"math/big"
-	"net/http"
-	"strconv"
+	"maps"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/MoeForge/moego/json"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 const (
-	signalPrefix = "Anthropic-Ratelimit-Unified-"
-	// percentPerFraction converts usage percent to the header's 0-1 fraction.
-	percentPerFraction = 100
-	// fractionDecimalPlaces is the number of decimal places added by dividing by 100.
-	fractionDecimalPlaces = 2
+	fullWindowPercent = 100
 	// fableModelName is the scoped weekly model the upstream 7d_oi window tracks.
 	fableModelName = "fable"
 )
@@ -41,14 +38,13 @@ type usageWindow struct {
 	LimitDollars *float64 `json:"limit_dollars"`
 }
 
-// HeadersFromUsage converts an /api/oauth/usage document into the unified
-// rate-limit header shape the passive quota observer already records.
-func HeadersFromUsage(raw []byte) (http.Header, error) {
+// WindowsFromUsage converts an /api/oauth/usage document into normalized quota windows.
+func WindowsFromUsage(raw []byte) ([]coreauth.QuotaWindow, error) {
 	var document map[string]json.RawMessage
 	if errUnmarshal := json.Unmarshal(raw, &document); errUnmarshal != nil {
 		return nil, fmt.Errorf("parse Claude usage: %w", errUnmarshal)
 	}
-	headers := http.Header{}
+	windows := map[string]coreauth.QuotaWindow{}
 	covered := map[string]bool{}
 	if rawLimits, ok := document["limits"]; ok {
 		var limits []usageLimit
@@ -58,7 +54,7 @@ func HeadersFromUsage(raw []byte) (http.Header, error) {
 				if token == "" || limit.Percent == nil {
 					continue
 				}
-				setWindow(headers, token, *limit.Percent, limit.ResetsAt, limitStatus(limit.Severity, *limit.Percent), "")
+				setWindow(windows, token, *limit.Percent, limit.ResetsAt, limitStatus(limit.Severity, *limit.Percent), "")
 				covered[key] = true
 			}
 		}
@@ -79,12 +75,28 @@ func HeadersFromUsage(raw []byte) (http.Header, error) {
 		if window.LimitDollars != nil {
 			label = fmt.Sprintf("Spend limit $%.0f", *window.LimitDollars)
 		}
-		setWindow(headers, tokenForKey(key), *window.Utilization, reset, "", label)
+		setWindow(windows, tokenForKey(key), *window.Utilization, reset, "", label)
 	}
-	if len(headers) == 0 {
+	if len(windows) == 0 {
 		return nil, fmt.Errorf("parse Claude usage: no usage windows in response")
 	}
-	return headers, nil
+	out := slices.Collect(maps.Values(windows))
+	slices.SortFunc(out, func(a, b coreauth.QuotaWindow) int {
+		if a.Scoped != b.Scoped {
+			if !a.Scoped {
+				return -1
+			}
+			return 1
+		}
+		if a.Duration != b.Duration {
+			if a.Duration < b.Duration {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Key, b.Key)
+	})
+	return out, nil
 }
 
 // limitToken maps a limits[] entry to its header token and the top-level key
@@ -142,36 +154,39 @@ func slugify(value string) string {
 // limitStatus maps severity to the unified header status vocabulary.
 func limitStatus(severity string, percent float64) string {
 	switch {
-	case percent >= percentPerFraction:
-		return "rejected"
+	case percent >= fullWindowPercent:
+		return coreauth.QuotaWindowStatusRejected
 	case strings.EqualFold(severity, "normal") || severity == "":
-		return "allowed"
+		return coreauth.QuotaWindowStatusAllowed
 	default:
 		return "allowed_warning"
 	}
 }
 
-func setWindow(headers http.Header, token string, percent float64, resetsAt, status, label string) {
+func setWindow(windows map[string]coreauth.QuotaWindow, token string, percent float64, resetsAt, status, label string) {
 	if token == "" {
 		return
 	}
-	base := signalPrefix + token + "-"
-	decimal := strconv.FormatFloat(percent, 'f', -1, 64)
-	fraction, _ := new(big.Rat).SetString(decimal)
-	// Division by 100 adds two decimal places; retain every original decimal digit.
-	decimalPlaces := 0
-	if point := strings.IndexByte(decimal, '.'); point >= 0 {
-		decimalPlaces = len(decimal) - point - 1
+	window, exists := windows[token]
+	if !exists {
+		window = *coreauth.NewClaudeQuotaWindow(token)
 	}
-	fraction.Quo(fraction, big.NewRat(percentPerFraction, 1))
-	headers.Set(base+"Utilization", strings.TrimRight(strings.TrimRight(fraction.FloatString(decimalPlaces+fractionDecimalPlaces), "0"), "."))
+	if percent == 0 {
+		percent = 0 // The legacy fraction parser canonicalized negative zero.
+	}
+	window.UsedPercent = &percent
 	if at, errParse := time.Parse(time.RFC3339Nano, strings.TrimSpace(resetsAt)); errParse == nil {
-		headers.Set(base+"Reset", strconv.FormatInt(at.Unix(), 10))
+		// Legacy lookup signals carried whole Unix seconds.
+		window.ResetsAt = time.Time{}
+		if seconds := at.Unix(); seconds > 0 {
+			window.ResetsAt = time.Unix(seconds, 0)
+		}
 	}
 	if status != "" {
-		headers.Set(base+"Status", status)
+		window.Status = status
 	}
 	if label != "" {
-		headers.Set(base+"Label", label)
+		window.Label = label
 	}
+	windows[token] = window
 }

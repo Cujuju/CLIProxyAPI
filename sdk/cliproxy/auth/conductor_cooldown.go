@@ -1122,11 +1122,11 @@ func dedupeStrings(values []string) []string {
 
 // ResetQuota clears quota/cooldown state for an auth and resumes registry routing.
 func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []string, error) {
-	return m.resetQuota(ctx, strings.TrimSpace(authID), time.Time{}, nil)
+	return m.resetQuota(ctx, strings.TrimSpace(authID), time.Time{}, nil, nil)
 }
 
 // resetQuota records the lookup and evaluates recovery under the same mutation lock.
-func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time.Time, recordLookup func(*Auth) (bool, error)) (*Auth, []string, error) {
+func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time.Time, recoveryWindows []QuotaWindow, recordLookup func(*Auth) (bool, error)) (*Auth, []string, error) {
 	if m == nil {
 		return nil, nil, nil
 	}
@@ -1171,7 +1171,7 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time
 	}
 
 	if recordLookup != nil {
-		if !clearQuotaCooldownFromLookup(auth, lookedUpAt, now) {
+		if !clearQuotaCooldownFromLookup(auth, recoveryWindows, lookedUpAt, now) {
 			m.mu.Unlock()
 			return nil, nil, nil
 		}
@@ -1246,14 +1246,17 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time
 }
 
 // clearQuotaCooldownFromLookup releases only quota layers older than the lookup.
-func clearQuotaCooldownFromLookup(auth *Auth, lookedUpAt, now time.Time) bool {
+func clearQuotaCooldownFromLookup(auth *Auth, recoveryWindows []QuotaWindow, lookedUpAt, now time.Time) bool {
 	if auth.Disabled || auth.Status == StatusDisabled || !auth.Quota.LookedUpAt.Equal(lookedUpAt) ||
 		!lookedUpAt.After(auth.UpdatedAt) || (auth.LastError != nil && (auth.LastError.HTTPStatus == http.StatusUnauthorized || strings.EqualFold(auth.LastError.Code, "unauthorized"))) {
 		return false
 	}
-	windows := auth.Quota.LookupWindows
-	if len(windows) == 0 {
-		windows = signalWindows(auth.Provider, auth.Quota.LookupSignals, lookedUpAt)
+	windows := recoveryWindows
+	if windows == nil {
+		windows = auth.Quota.LookupWindows
+		if len(windows) == 0 {
+			windows = signalWindows(auth.Provider, auth.Quota.LookupSignals, lookedUpAt)
+		}
 	}
 	hasAccountWindow := false
 	for _, window := range windows {

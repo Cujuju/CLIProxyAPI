@@ -52,13 +52,13 @@ func (m *Manager) ObserveQuotaLookup(authID string, headers http.Header, lookedU
 	}
 	var recorded bool
 	var drift string
-	_, _, err := m.resetQuota(context.Background(), authID, lookedUpAt, func(auth *Auth) (bool, error) {
+	_, _, err := m.resetQuota(context.Background(), authID, lookedUpAt, nil, func(auth *Auth) (bool, error) {
 		if lookedUpAt.Before(auth.Quota.LookedUpAt) ||
 			!auth.Quota.ObserveLookupForProvider(auth.Provider, headers, lookedUpAt) {
 			return false, nil
 		}
 		recorded = true
-		drift = lookupDriftLine(auth, auth.Quota.LookupSignals, lookedUpAt)
+		drift = lookupDriftLineWindows(auth, signalWindows(auth.Provider, auth.Quota.LookupSignals, lookedUpAt), lookedUpAt)
 		return true, nil
 	})
 	if !recorded {
@@ -81,6 +81,7 @@ var ErrQuotaLookupCredentialChanged = errors.New("quota lookup credential is no 
 // A nil accept records observations at or after the stored time.
 // accept runs under the manager write lock and must neither mutate auth nor call manager methods.
 // An accepted older observation leaves the stored timestamp and cooldown intact.
+// An empty non-nil windows slice replaces any prior lookup snapshot without lifting cooldown.
 func (m *Manager) ObserveQuotaLookupWindows(ctx context.Context, authID string, windows []QuotaWindow,
 	lookedUpAt time.Time, accept func(*Auth) (bool, error)) (recorded bool, err error) {
 	if m == nil {
@@ -89,10 +90,11 @@ func (m *Manager) ObserveQuotaLookupWindows(ctx context.Context, authID string, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if strings.TrimSpace(authID) == "" || len(windows) == 0 || lookedUpAt.IsZero() {
+	if strings.TrimSpace(authID) == "" || windows == nil || lookedUpAt.IsZero() {
 		return false, errors.New("quota lookup requires a credential ID, windows, and timestamp")
 	}
-	_, _, err = m.resetQuota(ctx, authID, lookedUpAt, func(auth *Auth) (bool, error) {
+	var drift string
+	_, _, err = m.resetQuota(ctx, authID, lookedUpAt, windows, func(auth *Auth) (bool, error) {
 		if accept != nil {
 			if ok, errAccept := accept(auth); !ok || errAccept != nil {
 				return false, errAccept
@@ -100,14 +102,18 @@ func (m *Manager) ObserveQuotaLookupWindows(ctx context.Context, authID string, 
 		} else if lookedUpAt.Before(auth.Quota.LookedUpAt) {
 			return false, nil
 		}
-		auth.Quota.LookupWindows = cloneQuotaWindows(windows)
+		auth.Quota.LookupWindows = retainQuotaWindows(windows)
 		auth.Quota.LookupSignals = nil
 		if lookedUpAt.After(auth.Quota.LookedUpAt) {
 			auth.Quota.LookedUpAt = lookedUpAt
 		}
 		recorded = true
+		drift = lookupDriftLineWindows(auth, auth.Quota.LookupWindows, lookedUpAt)
 		return true, nil
 	})
+	if drift != "" {
+		log.Info(drift)
+	}
 	if recorded {
 		m.NotifyQuotaUpdated()
 	}

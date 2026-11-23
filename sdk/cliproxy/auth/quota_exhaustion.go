@@ -145,8 +145,7 @@ func credentialQuotaLimit(auth *Auth, model string, now time.Time) (quotaLimit, 
 	var latest quotaLimit
 	var lapsedWindow time.Duration
 	for _, window := range QuotaWindows(auth, now) {
-		spent := window.Status == QuotaWindowStatusRejected || (window.UsedPercent != nil && *window.UsedPercent >= fullWindowPercent)
-		if window.Scoped || !spent {
+		if window.Scoped || !isSpentQuotaWindow(window) {
 			continue
 		}
 		if !window.ResetsAt.After(now) {

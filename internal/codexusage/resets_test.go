@@ -3,6 +3,10 @@ package codexusage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -153,6 +157,9 @@ func TestRefreshRecordsUsageWindowsWithoutTraffic(t *testing.T) {
 		t.Fatalf("failures = %v", failures)
 	}
 	stored, _ := f.manager.GetByID("a")
+	if len(stored.Quota.LookupSignals) != 0 || len(stored.Quota.LookupWindows) != 2 {
+		t.Fatalf("expected normalized lookup, got %+v", stored.Quota)
+	}
 	windows := coreauth.QuotaWindows(stored, f.now)
 	if len(windows) != 2 {
 		t.Fatalf("windows = %+v", windows)
@@ -170,6 +177,40 @@ func TestRefreshRecordsUsageWindowsWithoutTraffic(t *testing.T) {
 	}
 }
 
+func TestUsageDocumentWindowParity(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	reset := f.now.Add(5*time.Hour - time.Minute).Unix()
+	f.body = fmt.Sprintf(`{
+		"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":18001,"reset_at":%d}},
+		"code_review_rate_limit":{
+			"primary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_at":%d},
+			"secondary_window":{"limit_window_seconds":18000,"reset_at":%d}}
+	}`, reset, reset, reset)
+	if failures := f.tracker.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("failures = %v", failures)
+	}
+	auth, _ := f.manager.GetByID("a")
+	got := coreauth.QuotaWindows(auth, f.now)
+	legacy := &coreauth.Auth{Provider: "codex"}
+	rawReset := strconv.FormatInt(reset, 10)
+	legacy.Quota.ObserveLookupForProvider("codex", http.Header{
+		"X-Codex-Primary-Used-Percent":               {"0"},
+		"X-Codex-Primary-Window-Minutes":             {"300"},
+		"X-Codex-Primary-Reset-At":                   {rawReset},
+		"X-Codex-Code-Review-Primary-Used-Percent":   {"0"},
+		"X-Codex-Code-Review-Primary-Window-Minutes": {"300"},
+		"X-Codex-Code-Review-Primary-Reset-At":       {rawReset},
+	}, f.now)
+	want := coreauth.QuotaWindows(legacy, f.now)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized windows = %+v, want %+v", got, want)
+	}
+	if len(got) != 2 || got[0].Cadence != coreauth.ResetCadenceOnUse || !got[0].ResetsAt.IsZero() ||
+		!got[1].Scoped || got[1].ResetsAt.Unix() != reset || got[1].Label != "code-review · 5-hour" {
+		t.Fatalf("unexpected unstarted or scoped window: %+v", got)
+	}
+}
+
 func TestRefreshAllIgnoresStalenessAndSkipsIneligible(t *testing.T) {
 	disabled := codexOAuth("disabled")
 	disabled.Disabled = true
@@ -180,7 +221,6 @@ func TestRefreshAllIgnoresStalenessAndSkipsIneligible(t *testing.T) {
 		t.Fatalf("calls = %v", f.calls)
 	}
 }
-
 
 // creditList is a reset-credit list in ChatGPT's shape: two unspent credits out of order, plus ones the
 // usage count leaves out (spent, another reset type, no expiry).
@@ -230,5 +270,73 @@ func TestRefreshKeepsCountsWhenTheCreditListFails(t *testing.T) {
 	got, ok := f.credits(t, "a")
 	if !ok || got.Available != 1 || len(got.Expiries) != 0 {
 		t.Fatalf("credits = %+v, %v; want counts kept and expiries unknown", got, ok)
+	}
+}
+
+func TestRefreshFlagsOnlyReplacesPriorSnapshotWithoutLiftingCooldown(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	reset := f.now.Add(time.Hour).Unix()
+	f.body = fmt.Sprintf(`{"rate_limit":{"primary_window":{"used_percent":100,"limit_window_seconds":18000,"reset_at":%d}}}`, reset)
+	if failures := f.tracker.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("initial refresh failures = %v", failures)
+	}
+	stored, _ := f.manager.GetByID("a")
+	retry := time.Hour
+	f.manager.MarkResult(t.Context(), coreauth.Result{
+		AuthID: stored.ID, Provider: "codex", CredentialScope: true, RetryAfter: &retry,
+		Error: &coreauth.Error{HTTPStatus: http.StatusTooManyRequests, Message: `{"error":{"type":"usage_limit_reached"}}`},
+	})
+	f.now = f.now.Add(time.Minute)
+	f.body = `{"rate_limit":{"allowed":true,"limit_reached":false}}`
+	if failures := f.tracker.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("flags-only refresh failures = %v", failures)
+	}
+	after, _ := f.manager.GetByID("a")
+	if len(coreauth.QuotaWindows(after, f.now)) != 0 || !after.Quota.LookedUpAt.Equal(f.now) {
+		t.Fatalf("flags-only response left stale snapshot: %+v", after.Quota)
+	}
+	if !after.Quota.Exceeded || !after.Unavailable {
+		t.Fatalf("flags-only response lifted cooldown: %+v", after)
+	}
+}
+
+func TestRefreshRejectsReplacementCredentialAndOlderSnapshot(t *testing.T) {
+	f := newFixture(t, codexOAuth("a"))
+	orig, _ := f.manager.GetByID("a")
+	f.body = fmt.Sprintf(`{"rate_limit":{"primary_window":{"used_percent":40,"limit_window_seconds":18000,"reset_at":%d}}}`, f.now.Add(time.Hour).Unix())
+	fetch := f.tracker.fetch
+	f.tracker.fetch = func(ctx context.Context, cfg *config.Config, auth *coreauth.Auth, url string) ([]byte, error) {
+		raw, err := fetch(ctx, cfg, auth, url)
+		if err != nil {
+			return nil, err
+		}
+		f.manager.Remove(t.Context(), auth.ID)
+		if _, errReg := f.manager.Register(t.Context(), &coreauth.Auth{ID: auth.ID, Provider: "claude", Metadata: map[string]any{"access_token": "c"}}); errReg != nil {
+			t.Fatal(errReg)
+		}
+		return raw, nil
+	}
+	if err := f.tracker.Refresh(t.Context(), orig); !errors.Is(err, coreauth.ErrQuotaLookupCredentialChanged) {
+		t.Fatalf("replacement err = %v, want ErrQuotaLookupCredentialChanged", err)
+	}
+	replaced, _ := f.manager.GetByID("a")
+	if len(replaced.Quota.LookupWindows) != 0 {
+		t.Fatalf("codex windows attached to claude credential: %+v", replaced.Quota.LookupWindows)
+	}
+
+	// Older lookup must not overwrite a newer snapshot.
+	f2 := newFixture(t, codexOAuth("b"))
+	f2.body = fmt.Sprintf(`{"rate_limit":{"primary_window":{"used_percent":20,"limit_window_seconds":18000,"reset_at":%d}}}`, f2.now.Add(time.Hour).Unix())
+	if failures := f2.tracker.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("initial failures = %v", failures)
+	}
+	f2.now = f2.now.Add(-time.Minute)
+	f2.body = fmt.Sprintf(`{"rate_limit":{"primary_window":{"used_percent":90,"limit_window_seconds":18000,"reset_at":%d}}}`, f2.now.Add(time.Hour).Unix())
+	if failures := f2.tracker.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("older refresh failures = %v", failures)
+	}
+	after, _ := f2.manager.GetByID("b")
+	if windows := coreauth.QuotaWindows(after, f2.now); len(windows) != 1 || *windows[0].UsedPercent != 20 {
+		t.Fatalf("older lookup overwrote newer snapshot: %+v", windows)
 	}
 }

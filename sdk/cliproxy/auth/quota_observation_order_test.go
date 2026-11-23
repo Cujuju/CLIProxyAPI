@@ -166,6 +166,151 @@ func TestObserveQuotaLookupWindowsValidation(t *testing.T) {
 	}
 }
 
+func TestObserveQuotaLookupWindowsEmptyReplacesWithoutLiftingCooldown(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	now := time.Now()
+	full := 100.0
+	auth := &Auth{
+		ID: "empty-clear", Provider: "codex", UpdatedAt: now, Status: StatusError,
+		Unavailable: true, NextRetryAfter: now.Add(time.Hour),
+		Quota: QuotaState{
+			Exceeded: true, Reason: credentialQuotaReason, NextRecoverAt: now.Add(time.Hour),
+			LookedUpAt: now, LookupWindows: []QuotaWindow{{Key: "primary", UsedPercent: &full}},
+		},
+	}
+	manager.auths[auth.ID] = auth
+	at := now.Add(time.Second)
+	if recorded, err := manager.ObserveQuotaLookupWindows(t.Context(), auth.ID, []QuotaWindow{}, at, nil); !recorded || err != nil {
+		t.Fatalf("empty lookup recorded=%v err=%v", recorded, err)
+	}
+	after, _ := manager.GetByID(auth.ID)
+	if len(QuotaWindows(after, at)) != 0 || !after.Quota.LookedUpAt.Equal(at) {
+		t.Fatalf("empty lookup did not replace prior windows: %+v", after.Quota)
+	}
+	if !after.Quota.Exceeded || !after.Unavailable || !after.NextRetryAfter.Equal(now.Add(time.Hour)) {
+		t.Fatalf("empty lookup lifted cooldown: %+v", after)
+	}
+}
+
+func TestObserveQuotaLookupWindowsBoundsRetainedSnapshot(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	auth, err := manager.Register(t.Context(), &Auth{ID: "bounded", Provider: "claude", Status: StatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(2_000, 0)
+	windows := make([]QuotaWindow, 0, 100)
+	for i := range 98 {
+		used := float64(i % 100)
+		windows = append(windows, QuotaWindow{
+			Key:         "a_" + string(rune('0'+i/10)) + string(rune('0'+i%10)),
+			UsedPercent: &used,
+			Scoped:      true,
+		})
+	}
+	used5h, used7d := 12.0, 34.0
+	windows = append(windows,
+		QuotaWindow{Key: "seven_day", Duration: weeklyWindow, UsedPercent: &used7d},
+		QuotaWindow{Key: "five_hour", Duration: fiveHourWindow, UsedPercent: &used5h},
+	)
+	if recorded, err := manager.ObserveQuotaLookupWindows(t.Context(), auth.ID, windows, now, nil); !recorded || err != nil {
+		t.Fatalf("recorded=%v err=%v", recorded, err)
+	}
+	stored, _ := manager.GetByID(auth.ID)
+	if len(stored.Quota.LookupWindows) != maxQuotaLookupWindows {
+		t.Fatalf("retained %d windows, want %d", len(stored.Quota.LookupWindows), maxQuotaLookupWindows)
+	}
+	manager.mu.RLock()
+	liveCap := cap(manager.auths[auth.ID].Quota.LookupWindows)
+	manager.mu.RUnlock()
+	if liveCap != maxQuotaLookupWindows {
+		t.Fatalf("live backing array cap = %d, want %d", liveCap, maxQuotaLookupWindows)
+	}
+	if stored.Quota.LookupWindows[0].Key != "five_hour" || stored.Quota.LookupWindows[1].Key != "seven_day" {
+		t.Fatalf("account-wide windows not prioritized: %+v", stored.Quota.LookupWindows[:2])
+	}
+	if stored.Quota.LookupWindows[2].Key != "a_00" || stored.Quota.LookupWindows[maxQuotaLookupWindows-1].Key != "a_61" {
+		t.Fatalf("scoped retention not deterministic: first=%q last=%q",
+			stored.Quota.LookupWindows[2].Key, stored.Quota.LookupWindows[maxQuotaLookupWindows-1].Key)
+	}
+}
+
+func TestObserveQuotaLookupWindowsTruncationPreservesCooldown(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	now := time.Unix(2_000, 0)
+	auth := &Auth{
+		ID: "truncated-cooldown", Provider: "claude", UpdatedAt: now, Status: StatusError,
+		Unavailable: true, NextRetryAfter: now.Add(time.Hour),
+		Quota: QuotaState{Exceeded: true, Reason: credentialQuotaReason, NextRecoverAt: now.Add(time.Hour)},
+	}
+	manager.auths[auth.ID] = auth
+	windows := make([]QuotaWindow, 0, maxQuotaLookupWindows+1)
+	for i := range maxQuotaLookupWindows {
+		avail := 10.0
+		windows = append(windows, QuotaWindow{
+			Key:         "a_" + string(rune('0'+i/10)) + string(rune('0'+i%10)),
+			Duration:    fiveHourWindow,
+			UsedPercent: &avail,
+		})
+	}
+	full := 100.0
+	weeklyReset := now.Add(48 * time.Hour)
+	windows = append(windows, QuotaWindow{Key: "seven_day", Duration: weeklyWindow, UsedPercent: &full, ResetsAt: weeklyReset})
+	if recorded, err := manager.ObserveQuotaLookupWindows(t.Context(), auth.ID, windows, now.Add(time.Second), nil); !recorded || err != nil {
+		t.Fatalf("recorded=%v err=%v", recorded, err)
+	}
+	after, _ := manager.GetByID(auth.ID)
+	if len(after.Quota.LookupWindows) != maxQuotaLookupWindows {
+		t.Fatalf("retained %d windows, want %d", len(after.Quota.LookupWindows), maxQuotaLookupWindows)
+	}
+	if !after.Quota.Exceeded || !after.Unavailable || !after.NextRetryAfter.Equal(now.Add(time.Hour)) {
+		t.Fatalf("truncated exhausted account window cleared cooldown: %+v", after)
+	}
+	limit, ok := credentialQuotaLimit(after, "", now.Add(time.Second))
+	if !ok || !limit.ResetsAt.Equal(weeklyReset) || limit.Window != weeklyWindow {
+		t.Fatalf("credentialQuotaLimit = %+v, %v; want %v (%v)", limit, ok, weeklyReset, weeklyWindow)
+	}
+
+	// Active reset tie: 64 spent weekly windows + 1 spent 5-hour window sharing the same reset.
+	tieReset := now.Add(4 * time.Hour)
+	tieWindows := make([]QuotaWindow, 0, maxQuotaLookupWindows+1)
+	for i := range maxQuotaLookupWindows {
+		tieWindows = append(tieWindows, QuotaWindow{
+			Key:         "w_" + string(rune('0'+i/10)) + string(rune('0'+i%10)),
+			Duration:    weeklyWindow,
+			UsedPercent: &full,
+			ResetsAt:    tieReset,
+		})
+	}
+	tieWindows = append(tieWindows, QuotaWindow{Key: "five_hour", Duration: fiveHourWindow, UsedPercent: &full, ResetsAt: tieReset})
+	if recorded, err := manager.ObserveQuotaLookupWindows(t.Context(), auth.ID, tieWindows, now.Add(2*time.Second), nil); !recorded || err != nil {
+		t.Fatalf("tie lookup recorded=%v err=%v", recorded, err)
+	}
+	after, _ = manager.GetByID(auth.ID)
+	if limit, ok = credentialQuotaLimit(after, "", now.Add(2*time.Second)); !ok || !limit.ResetsAt.Equal(tieReset) || limit.Window != fiveHourWindow {
+		t.Fatalf("active tie credentialQuotaLimit = %+v, %v; want %v (%v)", limit, ok, tieReset, fiveHourWindow)
+	}
+
+	// All windows lapsed during active cooldown: 64 recently lapsed 5h windows + 1 earlier-lapsed weekly window.
+	lapsedWindows := make([]QuotaWindow, 0, maxQuotaLookupWindows+1)
+	for i := range maxQuotaLookupWindows {
+		lapsedWindows = append(lapsedWindows, QuotaWindow{
+			Key:         "s_" + string(rune('0'+i/10)) + string(rune('0'+i%10)),
+			Duration:    fiveHourWindow,
+			UsedPercent: &full,
+			ResetsAt:    now.Add(-time.Minute),
+		})
+	}
+	lapsedWindows = append(lapsedWindows, QuotaWindow{Key: "seven_day", Duration: weeklyWindow, UsedPercent: &full, ResetsAt: now.Add(-10 * time.Minute)})
+	if recorded, err := manager.ObserveQuotaLookupWindows(t.Context(), auth.ID, lapsedWindows, now.Add(3*time.Second), nil); !recorded || err != nil {
+		t.Fatalf("lapsed lookup recorded=%v err=%v", recorded, err)
+	}
+	after, _ = manager.GetByID(auth.ID)
+	if limit, ok = credentialQuotaLimit(after, "", now.Add(3*time.Second)); !ok || !limit.ResetsAt.Equal(now.Add(time.Hour)) || limit.Window != weeklyWindow {
+		t.Fatalf("lapsed fallback credentialQuotaLimit = %+v, %v; want %v (%v)", limit, ok, now.Add(time.Hour), weeklyWindow)
+	}
+}
+
 func TestLookupRecoveryRequiresKnownAvailableAccountWindows(t *testing.T) {
 	available, full := 5.0, 100.0
 	first := QuotaWindow{Key: "five_hour", UsedPercent: &available}

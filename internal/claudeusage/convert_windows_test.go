@@ -1,7 +1,6 @@
 package claudeusage
 
 import (
-	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -10,13 +9,14 @@ import (
 )
 
 func TestResponseAndLookupWindowsUseSamePercentScale(t *testing.T) {
-	lookup, err := HeadersFromUsage([]byte(`{"five_hour":{"utilization":42.37},"seven_day":{"utilization":19.99},"iguana_necktie":{"utilization":12.5,"limit_dollars":250}}`))
+	lookup, err := WindowsFromUsage([]byte(`{"five_hour":{"utilization":42.37},"seven_day":{"utilization":19.99},"iguana_necktie":{"utilization":12.5,"limit_dollars":250}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	a := &coreauth.Auth{Provider: "claude"}
-	a.Quota.ObserveLookupForProvider("claude", lookup, now)
+	a.Quota.LookupWindows = lookup
+	a.Quota.LookedUpAt = now
 	a.Quota.ObserveResponseHeadersForProvider("claude", http.Header{
 		"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.4237"},
 		"Anthropic-Ratelimit-Unified-7d-Utilization": {"0.1999"},
@@ -29,13 +29,13 @@ func TestResponseAndLookupWindowsUseSamePercentScale(t *testing.T) {
 			t.Fatalf("windows = %+v", windows)
 		}
 		for _, w := range windows {
-			if w.UsedPercent == nil || math.Abs(*w.UsedPercent-want[w.Key]) > 1e-10 {
+			if w.UsedPercent == nil || *w.UsedPercent != want[w.Key] {
 				t.Fatalf("%s utilization = %v", w.Key, w.UsedPercent)
 			}
 		}
 	}
 	assertWindows()
 	// A newer lookup of the same usage must not change any displayed percentage.
-	a.Quota.ObserveLookupForProvider("claude", lookup, now.Add(2*time.Second))
+	a.Quota.LookedUpAt = now.Add(2 * time.Second)
 	assertWindows()
 }
