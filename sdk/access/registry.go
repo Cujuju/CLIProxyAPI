@@ -79,6 +79,29 @@ func ClearExclusiveProvider() {
 	registryMu.Unlock()
 }
 
+// RegisteredProvidersSnapshot atomically returns the active providers and whether an exclusive
+// provider restriction is in effect.
+func RegisteredProvidersSnapshot() ([]Provider, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if exclusiveProvider != "" {
+		if provider, exists := registry[exclusiveProvider]; exists && provider != nil {
+			return []Provider{provider}, true
+		}
+		return nil, true
+	}
+	if len(order) == 0 {
+		return nil, false
+	}
+	providers := make([]Provider, 0, len(order))
+	for _, typ := range order {
+		if provider, exists := registry[typ]; exists && provider != nil {
+			providers = append(providers, provider)
+		}
+	}
+	return providers, false
+}
+
 // RegisteredProviders returns the global provider instances in registration order.
 func RegisteredProviders() []Provider {
 	registryMu.RLock()

@@ -140,3 +140,38 @@ func TestExecuteStream_HungCredentialFailsOver(t *testing.T) {
 		t.Fatal("hung credential has no cooldown; the next request would wait on it again")
 	}
 }
+
+func TestStreamFirstByteTimeoutUnblocksHungStartAndStalledChannel(t *testing.T) {
+	const limit = 40 * time.Millisecond
+
+	releaseStart := make(chan struct{})
+	t.Cleanup(func() { close(releaseStart) })
+	startAt := time.Now()
+	_, err := executeStreamWithFirstByteTimeout(context.Background(), limit, func(_ context.Context) (*cliproxyexecutor.StreamResult, error) {
+		<-releaseStart
+		return nil, errors.New("late")
+	})
+	if err == nil || statusCodeFromError(err) != http.StatusGatewayTimeout {
+		t.Fatalf("blocked start err = %v, want 504 timeout", err)
+	}
+	if time.Since(startAt) > 500*time.Millisecond {
+		t.Fatalf("blocked start waited %v, want ~%v", time.Since(startAt), limit)
+	}
+
+	stalled := make(chan cliproxyexecutor.StreamChunk)
+	t.Cleanup(func() { close(stalled) })
+	res, err := executeStreamWithFirstByteTimeout(context.Background(), limit, func(_ context.Context) (*cliproxyexecutor.StreamResult, error) {
+		return &cliproxyexecutor.StreamResult{Chunks: stalled}, nil
+	})
+	if err != nil {
+		t.Fatalf("stalled channel start err = %v", err)
+	}
+	select {
+	case chunk := <-res.Chunks:
+		if chunk.Err == nil || statusCodeFromError(chunk.Err) != http.StatusGatewayTimeout {
+			t.Fatalf("stalled chunk err = %v, want 504 timeout", chunk.Err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("stalled channel did not time out")
+	}
+}

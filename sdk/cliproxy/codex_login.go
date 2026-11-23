@@ -4,8 +4,13 @@ import (
 	"strings"
 
 	codexlogin "github.com/router-for-me/CLIProxyAPI/v8/internal/access/codex_login"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
+
+func unregisterCodexLogin(manager *sdkaccess.Manager) {
+	codexlogin.UnregisterFor(manager)
+}
 
 // codexCredentialFinder matches a Codex login to a Codex credential the proxy holds.
 // Disabled credentials still match: they prove the login is the user's own.

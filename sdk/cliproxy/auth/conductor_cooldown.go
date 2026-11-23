@@ -1156,14 +1156,22 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time
 		}
 		return nil, nil, nil
 	}
+	now := time.Now()
+	var prevBlockers []QuotaWindow
 	if recordLookup != nil {
+		prevBlockers = blockingAccountWindows(auth, now)
 		if recorded, err := recordLookup(auth); !recorded || err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
+		// Only non-empty LookupWindows updates carry uncovered blockers; empty snapshots clear
+		// LookupWindows by contract, and header-based lookups (recoveryWindows == nil) must not
+		// populate LookupWindows where it would shadow LookupSignals.
+		if len(prevBlockers) > 0 && len(recoveryWindows) > 0 {
+			auth.Quota.LookupWindows = preserveUncoveredBlockers(auth.Quota.LookupWindows, prevBlockers)
+		}
 	}
 
-	now := time.Now()
 	var cooldownRecordsBefore []CooldownStateRecord
 	trackCooldownState := m.cooldownStore != nil
 	if trackCooldownState {
@@ -1171,7 +1179,7 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time
 	}
 
 	if recordLookup != nil {
-		if !clearQuotaCooldownFromLookup(auth, recoveryWindows, lookedUpAt, now) {
+		if !clearQuotaCooldownFromLookup(auth, recoveryWindows, prevBlockers, lookedUpAt, now) {
 			m.mu.Unlock()
 			return nil, nil, nil
 		}
@@ -1245,8 +1253,57 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, lookedUpAt time
 	return snapshot, dedupeStrings(models), nil
 }
 
+// blockingAccountWindows returns account-wide windows previously known to be exhausted
+// or rejected whose reset has not yet passed.
+func blockingAccountWindows(auth *Auth, now time.Time) []QuotaWindow {
+	if auth == nil {
+		return nil
+	}
+	byKey := map[string]QuotaWindow{}
+	collect := func(ws []QuotaWindow) {
+		for _, w := range ws {
+			if w.Scoped || w.Key == "" || !isSpentQuotaWindow(w) {
+				continue
+			}
+			if !w.ResetsAt.IsZero() && !w.ResetsAt.After(now) {
+				continue
+			}
+			byKey[w.Key] = w
+		}
+	}
+	collect(auth.Quota.LookupWindows)
+	collect(signalWindows(auth.Provider, auth.Quota.Signals, now))
+	collect(signalWindows(auth.Provider, auth.Quota.cooldownSignals, now))
+	if len(byKey) == 0 {
+		return nil
+	}
+	out := make([]QuotaWindow, 0, len(byKey))
+	for _, w := range byKey {
+		out = append(out, w)
+	}
+	return out
+}
+
+func preserveUncoveredBlockers(current, prevBlockers []QuotaWindow) []QuotaWindow {
+	covered := make(map[string]struct{}, len(current))
+	for _, w := range current {
+		if !w.Scoped && w.Key != "" {
+			covered[w.Key] = struct{}{}
+		}
+	}
+	merged := make([]QuotaWindow, 0, len(current)+len(prevBlockers))
+	// Place carried blockers first so retainQuotaWindows never drops an active blocker past the cap.
+	for _, prev := range prevBlockers {
+		if _, ok := covered[prev.Key]; !ok {
+			merged = append(merged, prev)
+		}
+	}
+	merged = append(merged, current...)
+	return retainQuotaWindows(merged)
+}
+
 // clearQuotaCooldownFromLookup releases only quota layers older than the lookup.
-func clearQuotaCooldownFromLookup(auth *Auth, recoveryWindows []QuotaWindow, lookedUpAt, now time.Time) bool {
+func clearQuotaCooldownFromLookup(auth *Auth, recoveryWindows, prevBlockers []QuotaWindow, lookedUpAt, now time.Time) bool {
 	if auth.Disabled || auth.Status == StatusDisabled || !auth.Quota.LookedUpAt.Equal(lookedUpAt) ||
 		!lookedUpAt.After(auth.UpdatedAt) || (auth.LastError != nil && (auth.LastError.HTTPStatus == http.StatusUnauthorized || strings.EqualFold(auth.LastError.Code, "unauthorized"))) {
 		return false
@@ -1259,6 +1316,7 @@ func clearQuotaCooldownFromLookup(auth *Auth, recoveryWindows []QuotaWindow, loo
 		}
 	}
 	hasAccountWindow := false
+	seenAccountKeys := make(map[string]struct{}, len(windows))
 	for _, window := range windows {
 		if window.Scoped {
 			continue
@@ -1267,10 +1325,17 @@ func clearQuotaCooldownFromLookup(auth *Auth, recoveryWindows []QuotaWindow, loo
 			!(*window.UsedPercent >= 0 && *window.UsedPercent < fullWindowPercent) {
 			return false
 		}
+		seenAccountKeys[window.Key] = struct{}{}
 		hasAccountWindow = true
 	}
 	if !hasAccountWindow {
 		return false
+	}
+	// Do not lift if a previously blocking account-wide window with a future reset was omitted by this lookup.
+	for _, prev := range prevBlockers {
+		if _, covered := seenAccountKeys[prev.Key]; !covered {
+			return false
+		}
 	}
 	changed := false
 	for _, state := range auth.ModelStates {

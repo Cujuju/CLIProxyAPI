@@ -62,3 +62,24 @@ func TestSessionAffinityPersisterCarriesBindingsToReplacementSelector(t *testing
 		t.Fatalf("replacement bindings = %+v, want the auth-b binding", bindings)
 	}
 }
+
+func TestSessionAffinityPersisterCarriesLiveBindingsAfterLastSnapshot(t *testing.T) {
+	store := coreauth.NewFileSessionAffinityStore(filepath.Join(t.TempDir(), coreauth.SessionAffinityStateFile))
+	persister := &sessionAffinityPersister{}
+	old := coreauth.NewSessionAffinitySelector(&coreauth.FillFirstSelector{})
+	t.Cleanup(old.Stop)
+	persister.sync(old, store)
+	old.RestoreSessionBindings([]coreauth.SessionBindingRecord{{AuthID: "auth-a", ExpiresAt: time.Now().Add(time.Hour), Aliases: []string{"claude::claude:s::m"}}})
+	persister.sync(old, store)
+
+	// Mutate live binding on old selector WITHOUT calling persister.sync first (simulates move/invalidation between 15s saves).
+	old.InvalidateAuth("auth-a")
+	old.RestoreSessionBindings([]coreauth.SessionBindingRecord{{AuthID: "auth-b", ExpiresAt: time.Now().Add(time.Hour), Aliases: []string{"claude::claude:s::m"}}})
+
+	replacement := coreauth.NewSessionAffinitySelector(&coreauth.FillFirstSelector{})
+	t.Cleanup(replacement.Stop)
+	persister.sync(replacement, store)
+	if bindings := replacement.SessionBindings(); len(bindings) != 1 || bindings[0].AuthID != "auth-b" {
+		t.Fatalf("replacement bindings = %+v, want live auth-b binding", bindings)
+	}
+}

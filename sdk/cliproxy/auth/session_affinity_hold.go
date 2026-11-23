@@ -120,6 +120,9 @@ func declaredPromptCacheLifetime(body []byte) time.Duration {
 
 // sessionHoldLimit answers a held session with its bound credential's usage limit.
 func (m *Manager) sessionHoldLimit(opts cliproxyexecutor.Options, providers []string, model string) error {
+	if pinnedAuthIDFromMetadata(opts.Metadata) != "" {
+		return nil
+	}
 	affinity, ok := m.Selector().(*SessionAffinitySelector)
 	if !ok || affinity.hold <= 0 || model == "" {
 		return nil

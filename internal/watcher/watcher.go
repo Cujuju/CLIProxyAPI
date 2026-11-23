@@ -38,6 +38,8 @@ type Watcher struct {
 	watchMu                    sync.Mutex
 	started                    bool
 	watchedAuthDir             string
+	watchedConfigDirs          []string
+	watchedConfigTargets       []string
 	config                     *config.Config
 	clientsMutex               sync.RWMutex
 	authRescanMu               sync.Mutex

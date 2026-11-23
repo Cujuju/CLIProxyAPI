@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	internalaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -127,7 +128,8 @@ func (s *Service) syncPluginRuntimeConfigForConfig(ctx context.Context, cfg *con
 		return false
 	}
 	if s.accessManager != nil {
-		s.accessManager.SetProviders(sdkaccess.RegisteredProviders())
+		baseProviders, exclusive := sdkaccess.RegisteredProvidersSnapshot()
+		s.accessManager.SetProviders(internalaccess.AssembleProviders(s.accessManager, cfg, baseProviders, exclusive))
 	}
 	s.pluginHost.RegisterUsagePlugins()
 	sdktranslator.SetPluginHooks(s.pluginHost)

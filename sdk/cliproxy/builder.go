@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	internalaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access"
 	codexlogin "github.com/router-for-me/CLIProxyAPI/v8/internal/access/codex_login"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
@@ -321,9 +322,9 @@ func (b *Builder) Build() (*Service, error) {
 	if b.resultPolicy != nil {
 		coreManager.SetResultPolicy(b.resultPolicy)
 	}
-	codexlogin.Configure(codexCredentialFinder(coreManager))
-	codexlogin.Sync(&b.cfg.SDKConfig)
-	accessManager.SetProviders(sdkaccess.RegisteredProviders())
+	codexlogin.ConfigureFor(accessManager, codexCredentialFinder(coreManager))
+	baseProviders, exclusive := sdkaccess.RegisteredProvidersSnapshot()
+	accessManager.SetProviders(internalaccess.AssembleProviders(accessManager, b.cfg, baseProviders, exclusive))
 
 	service := &Service{
 		pluginInterceptorHost: b.pluginInterceptorHost,

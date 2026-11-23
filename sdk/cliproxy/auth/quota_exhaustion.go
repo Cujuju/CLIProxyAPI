@@ -72,16 +72,19 @@ func (m *Manager) classifyQuotaExhaustion(err error, providers []string, model s
 	if err == nil || model == "" || (!isCooldown && !errors.As(err, &unavailable)) {
 		return err
 	}
-	limit, ok := poolQuotaLimit(m.snapshotAuths(), providers, model, time.Now())
+	now := time.Now()
+	limit, ok := poolQuotaLimit(m.snapshotAuths(), providers, model, now)
 	if !ok {
 		return err
 	}
+	retryAfter := max(0, limit.ResetsAt.Sub(now))
 	if isCooldown {
+		cooldown.resetIn = retryAfter
 		cooldown.setUsageLimit(limit)
 		return err
 	}
 	// Spent credentials beside ones blocked for other reasons select as unavailable (503).
-	usageLimit := newModelCooldownErrorWithCause(model, "", time.Until(limit.ResetsAt), err)
+	usageLimit := newModelCooldownErrorWithCause(model, "", retryAfter, err)
 	usageLimit.setUsageLimit(limit)
 	return usageLimit
 }
@@ -108,6 +111,20 @@ func poolQuotaLimit(auths []*Auth, providers []string, model string, now time.Ti
 		}
 		allClaude = allClaude && executorKeyFromAuth(auth) == "claude"
 		if limit, exhausted := credentialQuotaLimit(auth, model, now); exhausted {
+			// Combine quota reset with any longer non-quota or credential-retry block.
+			if blocked, _, next := isAuthBlockedForModel(auth, model, now); blocked {
+				if next.IsZero() {
+					return quotaLimit{}, false
+				}
+				if next.After(limit.ResetsAt) {
+					limit.ResetsAt = next
+				}
+			}
+			for _, extra := range []time.Time{auth.credentialRetryAfter, auth.nonQuotaCooldownUntil, auth.nonQuotaForceCooldownUntil} {
+				if extra.After(now) && extra.After(limit.ResetsAt) {
+					limit.ResetsAt = extra
+				}
+			}
 			if earliest.ResetsAt.IsZero() || limit.ResetsAt.Before(earliest.ResetsAt) {
 				earliest, earliestAuth = limit, auth
 			}
@@ -185,11 +202,12 @@ func (m *Manager) finalUsageLimitError(err error, providers []string, model stri
 	if err == nil || model == "" || statusCodeFromError(err) != http.StatusTooManyRequests || (errors.As(err, &cooldown) && cooldown.IsUsageLimit()) {
 		return err, false
 	}
-	limit, ok := poolQuotaLimit(m.snapshotAuths(), providers, model, time.Now())
+	now := time.Now()
+	limit, ok := poolQuotaLimit(m.snapshotAuths(), providers, model, now)
 	if !ok {
 		return err, false
 	}
-	usageLimit := newModelCooldownErrorWithCause(model, "", time.Until(limit.ResetsAt), err)
+	usageLimit := newModelCooldownErrorWithCause(model, "", max(0, limit.ResetsAt.Sub(now)), err)
 	usageLimit.setUsageLimit(limit)
 	return usageLimit, true
 }

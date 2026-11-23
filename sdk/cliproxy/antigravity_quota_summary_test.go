@@ -912,8 +912,8 @@ func TestAntigravityProbeBackoffScopes(t *testing.T) {
 	}{
 		{"catalog transient", antigravityModelsPath, http.StatusServiceUnavailable, false},
 		{"summary transient", sdkauth.AntigravityQuotaSummaryPath, http.StatusServiceUnavailable, false},
-		{"summary unauthorized", sdkauth.AntigravityQuotaSummaryPath, http.StatusUnauthorized, true},
-		{"catalog unauthorized", antigravityModelsPath, http.StatusUnauthorized, true},
+		{"summary unauthorized", sdkauth.AntigravityQuotaSummaryPath, http.StatusUnauthorized, false},
+		{"catalog unauthorized", antigravityModelsPath, http.StatusUnauthorized, false},
 		{"catalog forbidden", antigravityModelsPath, http.StatusForbidden, false},
 		{"summary forbidden", sdkauth.AntigravityQuotaSummaryPath, http.StatusForbidden, false},
 	} {

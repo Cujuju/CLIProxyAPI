@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
@@ -105,7 +106,9 @@ func TestAntigravityRetrySchedulerPreservesJitterDeadlines(t *testing.T) {
 		observed := make(chan observation, 2)
 		transport := http.DefaultTransport
 		http.DefaultTransport = antigravityReviewTransport(func(r *http.Request) (*http.Response, error) {
-			observed <- observation{strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer token-"), time.Since(start)}
+			if r.URL.Path == antigravityModelsPath {
+				observed <- observation{strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer token-"), time.Since(start)}
+			}
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"models":{}}`)), Request: r}, nil
 		})
 		defer func() { http.DefaultTransport = transport }()
@@ -136,4 +139,35 @@ func TestAntigravityRetrySchedulerPreservesJitterDeadlines(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAntigravitySummaryAuthErrorDoesNotBackOffCatalogProbe(t *testing.T) {
+	resetAntigravityCapabilityCache()
+	t.Cleanup(resetAntigravityCapabilityCache)
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	prevNow := antigravityNowFunc
+	antigravityNowFunc = func() time.Time { return now }
+	t.Cleanup(func() { antigravityNowFunc = prevNow })
+
+	cacheKey := "ag-account-1"
+	tokenKey := antigravityTokenFailureKey(cacheKey, "tok-1")
+	antigravityCapabilityMu.Lock()
+	antigravityCapabilityCache[cacheKey] = antigravityCapabilityCacheEntry{
+		summaryProbe: antigravityProbeState{pending: true},
+	}
+	antigravityCapabilityMu.Unlock()
+
+	_, _ = finishAntigravityModelProbe(context.Background(), cacheKey, tokenKey, sdkauth.AntigravityQuotaSummaryPath, antigravityModelCapabilityHints{}, antigravityProbeStatusAuthError)
+
+	antigravityCapabilityMu.RLock()
+	summaryRetry := antigravityFailureNextRetryLocked(cacheKey, tokenKey, sdkauth.AntigravityQuotaSummaryPath)
+	catalogRetry := antigravityFailureNextRetryLocked(cacheKey, tokenKey, antigravityModelsPath)
+	antigravityCapabilityMu.RUnlock()
+
+	if !summaryRetry.After(now) {
+		t.Fatalf("summaryRetry = %v, want after %v", summaryRetry, now)
+	}
+	if catalogRetry.After(now) {
+		t.Fatalf("catalogRetry = %v, want zero (summary 401 must not back off catalog)", catalogRetry)
+	}
 }
