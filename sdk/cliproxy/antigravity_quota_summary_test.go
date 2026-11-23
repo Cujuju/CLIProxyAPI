@@ -130,8 +130,8 @@ func TestAntigravityUsageSummaryWindows(t *testing.T) {
 		t.Fatalf("expected fresh fallback snapshot, paths=%v quota=%+v", paths, fallback.Quota)
 	}
 	if !windows[0].Scoped || !windows[1].Scoped ||
-		windows[0].Key != "ag:gemini-pro" || windows[0].Label != "gemini-pro" ||
-		windows[1].Key != "weekly:ag:gemini-pro" || windows[1].Label != "gemini-pro · Weekly" ||
+		windows[0].Key != "ag:gemini" || windows[0].Label != "Gemini" ||
+		windows[1].Key != "weekly:ag:gemini" || windows[1].Label != "Gemini · Weekly" ||
 		windows[0].Duration != 0 || windows[1].Duration != 604800*time.Second ||
 		windows[1].Status != coreauth.QuotaWindowStatusRejected {
 		t.Fatalf("unexpected model fallback windows %+v", windows)
@@ -196,6 +196,8 @@ func TestAntigravityUsageDoesNotShareCatalogOnlyResult(t *testing.T) {
 	t.Cleanup(func() { antigravityNowFunc = oldClock })
 	catalogStarted, releaseCatalog := make(chan struct{}), make(chan struct{})
 	catalogDone := make(chan struct{})
+	catalogHints := make(chan antigravityModelCapabilityHints, 1)
+	summaryStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case antigravityModelsPath:
@@ -203,6 +205,7 @@ func TestAntigravityUsageDoesNotShareCatalogOnlyResult(t *testing.T) {
 			<-releaseCatalog
 			_, _ = io.WriteString(w, `{"models":{"gemini-pro":{"quotaInfo":{"remainingFraction":0.25}}}}`)
 		case sdkauth.AntigravityQuotaSummaryPath:
+			close(summaryStarted)
 			<-catalogDone
 			_, _ = io.WriteString(w, `{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5}]}`)
 		default:
@@ -218,15 +221,22 @@ func TestAntigravityUsageDoesNotShareCatalogOnlyResult(t *testing.T) {
 	}
 	go func() {
 		defer close(catalogDone)
-		svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
+		catalogHints <- svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
 	}()
 	<-catalogStarted
-	followerCtx := &antigravityObservedContext{Context: t.Context(), waiting: make(chan struct{})}
 	usageDone := make(chan error, 1)
-	go func() { usageDone <- svc.NewAntigravityUsageLookup().Refresh(followerCtx, auth) }()
-	<-followerCtx.waiting
-	close(releaseCatalog)
-	<-catalogDone
+	go func() { usageDone <- svc.NewAntigravityUsageLookup().Refresh(t.Context(), auth) }()
+	select {
+	case <-summaryStarted:
+		close(releaseCatalog)
+	case <-time.After(2 * time.Second):
+		close(releaseCatalog)
+		<-usageDone
+		t.Fatal("summary could not start while the catalog was in flight")
+	}
+	if hints := <-catalogHints; len(hints.ModelIDs) != 1 {
+		t.Fatalf("overlapping summary superseded catalog: %+v", hints)
+	}
 	if err := <-usageDone; err != nil {
 		t.Fatal(err)
 	}
@@ -296,17 +306,27 @@ func TestAntigravityScheduledRefreshUpdatesUsage(t *testing.T) {
 					t.Fatalf("requests = %v, want %v", paths, wantPaths)
 				}
 			}
+			var initialPaths []string
+			if summaryAvailable {
+				// A freshly cached catalog must not delay the startup summary.
+				svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
+				initialPaths = append(initialPaths, antigravityModelsPath)
+			}
+			svc.asyncProbeAntigravityCapabilities(t.Context(), auth, "antigravity")
+			svc.WaitAntigravityProbes()
+			initialPaths = append(initialPaths, sdkauth.AntigravityQuotaSummaryPath)
+			if !summaryAvailable {
+				initialPaths = append(initialPaths, antigravityModelsPath)
+			}
+			check(25, initialPaths)
 			refresh()
-			wantPaths := []string{sdkauth.AntigravityQuotaSummaryPath, antigravityModelsPath}
-			check(25, wantPaths)
-			refresh()
-			check(25, wantPaths)
+			check(25, initialPaths)
 			mu.Lock()
 			remaining = "0.5"
 			mu.Unlock()
 			now = now.Add(antigravityCapabilityCacheTTL)
 			refresh()
-			check(50, append(slices.Clone(wantPaths), wantPaths...))
+			check(50, append(slices.Clone(initialPaths), sdkauth.AntigravityQuotaSummaryPath, antigravityModelsPath))
 			if !GlobalModelRegistry().ClientSupportsModel(auth.ID, "gemini-3.1-flash-lite") {
 				t.Fatal("scheduled refresh did not register the catalog")
 			}
@@ -324,7 +344,9 @@ func TestAntigravityProbeBackoffScopes(t *testing.T) {
 		{"catalog transient", antigravityModelsPath, http.StatusServiceUnavailable, false},
 		{"summary transient", sdkauth.AntigravityQuotaSummaryPath, http.StatusServiceUnavailable, false},
 		{"summary unauthorized", sdkauth.AntigravityQuotaSummaryPath, http.StatusUnauthorized, true},
-		{"catalog forbidden", antigravityModelsPath, http.StatusForbidden, true},
+		{"catalog unauthorized", antigravityModelsPath, http.StatusUnauthorized, true},
+		{"catalog forbidden", antigravityModelsPath, http.StatusForbidden, false},
+		{"summary forbidden", sdkauth.AntigravityQuotaSummaryPath, http.StatusForbidden, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetAntigravityCapabilityCache()

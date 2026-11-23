@@ -115,10 +115,10 @@ func (s *Service) executeAntigravityModelRefresh(request *antigravityModelRefres
 			return
 		}
 	}
+	key := s.antigravityCapabilityKey(request.auth)
 	if request.refreshUsage {
 		usage := s.NewAntigravityUsageLookup()
 		if usage.Eligible(request.auth) {
-			key := s.antigravityCapabilityKey(request.auth)
 			token, _ := request.auth.Metadata["access_token"].(string)
 			failureKey := antigravityTokenFailureKey(key, strings.TrimSpace(token))
 			antigravityCapabilityMu.RLock()
@@ -128,6 +128,9 @@ func (s *Service) executeAntigravityModelRefresh(request *antigravityModelRefres
 				_ = usage.Refresh(probeCtx, request.auth)
 			}
 		}
+	}
+	if s.antigravityCapabilityKey(request.auth) != key {
+		return
 	}
 	expectedKey, hints := s.probeAndRegisterAntigravityModels(probeCtx, request.auth, request.provider, request.auth.RegistrationEpoch, request.registryEpoch)
 	if hints.ModelIDs != nil {

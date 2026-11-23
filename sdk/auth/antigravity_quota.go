@@ -26,8 +26,38 @@ type AntigravityQuotaBucket struct {
 	ResetTime         time.Time
 }
 
-// FetchAntigravityQuotaSummary fetches quota buckets. An empty result permits catalog fallback.
+// FetchAntigravityQuotaSummary merges quota buckets in host order. An empty success permits catalog fallback.
 func FetchAntigravityQuotaSummary(ctx context.Context, req AntigravityModelProbeRequest) ([]AntigravityQuotaBucket, AntigravityProbeStatus) {
+	var merged []AntigravityQuotaBucket
+	seen := make(map[string]struct{})
+	status := AntigravityProbeStatusTransientError
+	for _, baseURL := range req.BaseURLs {
+		hostReq := req
+		hostReq.BaseURLs = []string{baseURL}
+		buckets, hostStatus := fetchAntigravityQuotaSummary(ctx, hostReq)
+		switch hostStatus {
+		case AntigravityProbeStatusSuccess:
+			status = hostStatus
+		case AntigravityProbeStatusAuthError:
+			if status != AntigravityProbeStatusSuccess {
+				status = hostStatus
+			}
+		case AntigravityProbeStatusForbidden:
+			if status == AntigravityProbeStatusTransientError {
+				status = hostStatus
+			}
+		}
+		for _, bucket := range buckets {
+			if _, exists := seen[bucket.ID]; !exists {
+				seen[bucket.ID] = struct{}{}
+				merged = append(merged, bucket)
+			}
+		}
+	}
+	return merged, status
+}
+
+func fetchAntigravityQuotaSummary(ctx context.Context, req AntigravityModelProbeRequest) ([]AntigravityQuotaBucket, AntigravityProbeStatus) {
 	data, status := fetchAntigravityProbe(ctx, req, AntigravityQuotaSummaryPath)
 	if status != AntigravityProbeStatusSuccess || len(bytes.TrimSpace(data)) == 0 {
 		return nil, status
@@ -98,6 +128,7 @@ func addAntigravityModelQuota(quotas map[string]AntigravityModelQuota, id string
 	}
 	quotas[id] = AntigravityModelQuota{
 		ModelID: id, DisplayName: strings.Clone(model.Get("displayName").Str),
+		ModelProvider:     strings.Clone(model.Get("modelProvider").Str),
 		RemainingFraction: fraction, ResetTime: reset,
 	}
 	return quotas
