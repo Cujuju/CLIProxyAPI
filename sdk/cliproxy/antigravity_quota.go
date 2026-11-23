@@ -201,6 +201,74 @@ func (l *AntigravityUsageLookup) Refresh(ctx context.Context, auth *coreauth.Aut
 	return l.service.recordAntigravityQuota(ctx, auth, key, windows, hints.lookedUpAt, hints.revision, false)
 }
 
+func (s *Service) executeAntigravitySummaryRefresh(ctx context.Context, request *antigravityModelRefreshRequest) {
+	auth := request.auth
+	req, key := s.antigravityProbeRequest(auth)
+	if key != request.routeKey {
+		return
+	}
+	failureKey := antigravityTokenFailureKey(key, req.AccessToken)
+	antigravityCapabilityMu.RLock()
+	due := !antigravityNowFunc().Before(antigravitySummaryRefreshAtLocked(key, failureKey))
+	antigravityCapabilityMu.RUnlock()
+	if !due {
+		return
+	}
+	summary, err := s.fetchAntigravityProbeHints(ctx, auth, req, key, sdkauth.AntigravityQuotaSummaryPath, true, 0)
+	if err != nil || ctx.Err() != nil {
+		return
+	}
+	if len(summary.quotaBuckets) > 0 {
+		if windows := summary.quotaWindows(); len(windows) > 0 {
+			_ = s.recordAntigravityQuota(ctx, auth, key, windows, summary.lookedUpAt, summary.revision, false)
+		} else if ctx.Err() == nil {
+			s.markAntigravitySummaryFulfilled(key, summary.revision)
+		}
+		return
+	}
+
+	// Catalog fallback must leave the summary worker free for the next scan.
+	fallback := &antigravitySummaryFallback{ctx: request.ctx, probe: req, summary: summary, minCatalogRevision: request.minCatalogRevision}
+	s.queueAntigravityRefresh(request.ctx, auth, "", fallback, &s.antigravityRefreshPending, s.executeAntigravityModelRefresh)
+}
+
+func (s *Service) recordAntigravityBackgroundFallback(request *antigravityModelRefreshRequest) {
+	fallback := request.fallback
+	if pluginHostHasAuthModelProvider(s.pluginHost, request.auth.Provider) {
+		return
+	}
+	ctx, finish, active := s.beginAntigravityAccountProbe(fallback.ctx, request.auth, request.routeKey, "", request.token)
+	if !active {
+		return
+	}
+	defer finish()
+	antigravityCapabilityMu.RLock()
+	superseded := antigravityCapabilityCache[request.routeKey].summaryFulfilledRevision >= fallback.summary.revision
+	antigravityCapabilityMu.RUnlock()
+	if superseded {
+		return
+	}
+	hints, err := s.fetchAntigravityCatalogFallback(ctx, request.auth, fallback.probe, request.routeKey, fallback.summary, fallback.minCatalogRevision)
+	if err == nil {
+		if windows := hints.quotaWindows(); len(windows) > 0 {
+			_ = s.recordAntigravityQuota(ctx, request.auth, request.routeKey, windows, hints.lookedUpAt, hints.revision, false)
+		} else if ctx.Err() == nil {
+			s.markAntigravitySummaryFulfilled(request.routeKey, hints.revision)
+		}
+	}
+}
+
+func (s *Service) markAntigravitySummaryFulfilled(key string, revision uint64) {
+	antigravityCapabilityMu.Lock()
+	entry := antigravityCapabilityCache[key]
+	if revision > entry.summaryFulfilledRevision {
+		entry.summaryFulfilledRevision = revision
+		entry.summaryExpiresAt = antigravityNowFunc().Add(antigravityCapabilityCacheTTL)
+		antigravityCapabilityCache[key] = entry
+	}
+	antigravityCapabilityMu.Unlock()
+}
+
 // RefreshAll fetches usage for every eligible credential and returns failures by ID.
 func (l *AntigravityUsageLookup) RefreshAll(ctx context.Context) map[string]error {
 	failures := map[string]error{}
@@ -233,7 +301,7 @@ func (l *AntigravityUsageLookup) RefreshAll(ctx context.Context) map[string]erro
 }
 
 func (s *Service) recordAntigravityQuota(ctx context.Context, auth *coreauth.Auth, key string, windows []coreauth.QuotaWindow, lookedUpAt time.Time, revision uint64, catalogOnly bool) error {
-	_, err := s.coreManager.ObserveQuotaLookupWindows(ctx, auth.ID, windows, lookedUpAt, func(current *coreauth.Auth) (bool, error) {
+	recorded, err := s.coreManager.ObserveQuotaLookupWindows(ctx, auth.ID, windows, lookedUpAt, func(current *coreauth.Auth) (bool, error) {
 		if !antigravityAuthModelSettingsEqual(current, auth) || s.antigravityCapabilityKey(current) != key {
 			return false, coreauth.ErrQuotaLookupCredentialChanged
 		}
@@ -257,6 +325,9 @@ func (s *Service) recordAntigravityQuota(ctx context.Context, auth *coreauth.Aut
 		s.antigravityQuotaPublished[auth.ID] = revision
 		return true, nil
 	})
+	if !catalogOnly && (recorded || err == nil) {
+		s.markAntigravitySummaryFulfilled(key, revision)
+	}
 	return err
 }
 

@@ -158,7 +158,7 @@ type Service struct {
 	homePluginSyncFetch          func(context.Context, sdkpluginstore.PluginSyncRequest) (sdkpluginstore.PluginSyncResponse, error)
 	homePluginDeleteTask         func(context.Context, *config.Config, home.PluginTask) homeplugins.SyncReport
 	antigravityProbeWg           sync.WaitGroup
-	// antigravityContext is protected by cfgMu and owns background model probes.
+	// antigravityContext is protected by cfgMu and owns background probes.
 	antigravityContext        context.Context
 	antigravityQuotaPublishMu sync.Mutex
 	// Retains one revision per refreshed credential ID until restart. Only credential churn grows the map.
@@ -167,10 +167,10 @@ type Service struct {
 	antigravityProbeMu       sync.Mutex
 	antigravityAccountProbes map[string]map[*antigravityAccountProbe]struct{}
 	antigravityRefreshWake   chan struct{}
-	// antigravityRefreshPending is protected by antigravityProbeMu. Each entry
-	// owns one worker and at most one queued snapshot shared by all probe entry
-	// points. A nil value means the worker is running without a queued successor.
+	// Both queues are protected by antigravityProbeMu. Each account has one
+	// worker per queue. A nil value means there is no queued successor.
 	antigravityRefreshPending map[string]*antigravityModelRefreshRequest
+	antigravitySummaryPending map[string]*antigravityModelRefreshRequest
 	antigravityPersistPending map[string]*antigravityHintPersistRequest
 	antigravityPersistActive  map[string]*antigravityHintPersistRequest
 }

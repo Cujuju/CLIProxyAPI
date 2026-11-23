@@ -2,6 +2,7 @@ package cliproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -148,10 +150,10 @@ func TestAntigravityUsageSummaryKeepsQueuedWindowUnstarted(t *testing.T) {
 		oldClock := antigravityNowFunc
 		antigravityNowFunc = func() time.Time { return now }
 		defer func() { antigravityNowFunc = oldClock }()
-		oldSlots := antigravityProbeSlots
-		antigravityProbeSlots = make(chan struct{}, 1)
-		antigravityProbeSlots <- struct{}{}
-		defer func() { antigravityProbeSlots = oldSlots }()
+		oldSlots := antigravitySummaryProbeSlots
+		antigravitySummaryProbeSlots = make(chan struct{}, 1)
+		antigravitySummaryProbeSlots <- struct{}{}
+		defer func() { antigravitySummaryProbeSlots = oldSlots }()
 		oldTransport := http.DefaultTransport
 		http.DefaultTransport = antigravityReviewTransport(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path != sdkauth.AntigravityQuotaSummaryPath {
@@ -173,7 +175,7 @@ func TestAntigravityUsageSummaryKeepsQueuedWindowUnstarted(t *testing.T) {
 		go func() { done <- svc.NewAntigravityUsageLookup().Refresh(t.Context(), auth) }()
 		synctest.Wait()
 		now = queuedAt.Add(antigravityUnstartedTolerance + time.Second)
-		<-antigravityProbeSlots
+		<-antigravitySummaryProbeSlots
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
@@ -303,7 +305,7 @@ func TestAntigravityScheduledRefreshUpdatesUsage(t *testing.T) {
 				}
 				mu.Lock()
 				defer mu.Unlock()
-				if !slices.Equal(paths, wantPaths) {
+				if !slices.Equal(slices.Sorted(slices.Values(paths)), slices.Sorted(slices.Values(wantPaths))) {
 					t.Fatalf("requests = %v, want %v", paths, wantPaths)
 				}
 			}
@@ -330,41 +332,380 @@ func TestAntigravityScheduledRefreshUpdatesUsage(t *testing.T) {
 	}
 }
 
-func TestAntigravityStartupRegistersCatalogWhenSummaryStalls(t *testing.T) {
+func TestAntigravityUsageBackgroundProbesRunIndependently(t *testing.T) {
+	for _, tc := range []struct {
+		name, stalledPath string
+		emptyFirstSummary bool
+	}{
+		{"stalled catalog", antigravityModelsPath, false},
+		{"stalled summary", sdkauth.AntigravityQuotaSummaryPath, false},
+		{"stalled catalog fallback", antigravityModelsPath, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				resetAntigravityCapabilityCache()
+				defer resetAntigravityCapabilityCache()
+				defer setAntigravityTestProbeSlots()()
+				oldTransport := http.DefaultTransport
+				var stalledCalls, completedCalls int
+				http.DefaultTransport = antigravityReviewTransport(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Path == tc.stalledPath {
+						stalledCalls++
+						<-req.Context().Done()
+						return nil, req.Context().Err()
+					}
+					completedCalls++
+					if req.URL.Path == antigravityModelsPath {
+						model := "gemini-3.1-flash-lite"
+						if completedCalls == 2 {
+							model = "gemini-3-flash"
+						}
+						return antigravityVersionTestResponse(req, http.StatusOK, fmt.Sprintf(`{"models":{%q:{}}}`, model)), nil
+					}
+					if tc.emptyFirstSummary && completedCalls == 1 {
+						return antigravityVersionTestResponse(req, http.StatusNotFound, ""), nil
+					}
+					return antigravityVersionTestResponse(req, http.StatusOK, `{"buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.5}]}`), nil
+				})
+				defer func() { http.DefaultTransport = oldTransport }()
+				manager := coreauth.NewManager(nil, nil, nil)
+				svc := &Service{coreManager: manager}
+				auth, err := manager.Register(t.Context(), antigravityTestAuth("background-independence", "https://quota.invalid"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer GlobalModelRegistry().UnregisterClient(auth.ID)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer func() { cancel(); svc.WaitAntigravityProbes() }()
+				if tc.emptyFirstSummary {
+					svc.queueAntigravitySummaryRefresh(ctx, auth)
+				} else {
+					svc.asyncProbeAntigravityCapabilities(ctx, auth, "antigravity")
+				}
+				for i, model := range []string{"gemini-3.1-flash-lite", "gemini-3-flash"} {
+					synctest.Wait()
+					if stalledCalls != 1 || completedCalls != i+1 {
+						t.Fatalf("refresh %d: stalled requests=%d completed requests=%d", i, stalledCalls, completedCalls)
+					}
+					if tc.stalledPath == sdkauth.AntigravityQuotaSummaryPath {
+						if !GlobalModelRegistry().ClientSupportsModel(auth.ID, model) {
+							t.Fatalf("stalled summary blocked registration of %s", model)
+						}
+					} else if i != 0 || !tc.emptyFirstSummary {
+						current, _ := manager.GetByID(auth.ID)
+						if !hasAntigravitySummaryWindows(current.Quota.LookupWindows) || !current.Quota.LookedUpAt.Equal(time.Now()) {
+							t.Fatal("stalled catalog blocked quota summary publication")
+						}
+					}
+					if i == 0 {
+						time.Sleep(antigravityCapabilityCacheTTL) // Advance the synctest clock.
+						svc.refreshAntigravityModels(ctx)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestAntigravityUsageFallbackPublishesDespiteStalledSummaryRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		resetAntigravityCapabilityCache()
 		defer resetAntigravityCapabilityCache()
+		defer setAntigravityTestProbeSlots()()
+		releaseCatalog := make(chan struct{})
+		var summaryCalls, catalogCalls atomic.Int32
 		oldTransport := http.DefaultTransport
-		summaryStarted := make(chan struct{})
 		http.DefaultTransport = antigravityReviewTransport(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
-				select {
-				case <-summaryStarted:
-				default:
-					close(summaryStarted)
+				if summaryCalls.Add(1) == 1 {
+					return antigravityVersionTestResponse(req, http.StatusNotFound, ""), nil
 				}
 				<-req.Context().Done()
 				return nil, req.Context().Err()
 			}
-			return antigravityVersionTestResponse(req, http.StatusOK, `{"models":{"gemini-3.1-flash-lite":{}}}`), nil
+			catalogCalls.Add(1)
+			select {
+			case <-releaseCatalog:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			return antigravityVersionTestResponse(req, http.StatusOK,
+				`{"models":{"gemini-3-flash":{"quotaInfo":{"remainingFraction":0.75,"resetTime":"2026-11-01T00:00:00Z"}}}}`), nil
 		})
 		defer func() { http.DefaultTransport = oldTransport }()
 		manager := coreauth.NewManager(nil, nil, nil)
 		svc := &Service{coreManager: manager}
-		auth, err := manager.Register(t.Context(), antigravityTestAuth("stalled-summary", "https://quota.invalid"))
+		priorUsed := 90.0
+		seed := antigravityTestAuth("fallback-during-retry", "https://quota.invalid")
+		// Seed a prior summary window so catalogOnly=true cannot mask a dropped fallback.
+		seed.Quota.LookedUpAt = time.Now().Add(-time.Hour)
+		seed.Quota.LookupWindows = []coreauth.QuotaWindow{{Key: antigravitySummaryWindowPrefix + "gemini-5h", UsedPercent: &priorUsed}}
+		auth, err := manager.Register(t.Context(), seed)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer GlobalModelRegistry().UnregisterClient(auth.ID)
 		ctx, cancel := context.WithCancel(t.Context())
-		defer func() { cancel(); svc.WaitAntigravityProbes(); synctest.Wait() }()
-		svc.asyncProbeAntigravityCapabilities(ctx, auth, "antigravity")
-		<-summaryStarted
+		defer func() { cancel(); svc.WaitAntigravityProbes() }()
+
+		// Block the catalog worker, then let an empty summary queue its fallback behind it.
+		svc.queueAntigravityModelRefresh(ctx, auth, "antigravity")
 		synctest.Wait()
-		if !GlobalModelRegistry().ClientSupportsModel(auth.ID, "gemini-3.1-flash-lite") {
-			t.Fatal("stalled startup summary blocked catalog registration")
+		svc.queueAntigravitySummaryRefresh(ctx, auth)
+		synctest.Wait()
+		// Start a stalled summary retry while the fallback is waiting on the catalog worker.
+		svc.refreshAntigravityModels(ctx)
+		synctest.Wait()
+		if summaryCalls.Load() != 2 || catalogCalls.Load() != 1 {
+			t.Fatalf("summaryCalls=%d catalogCalls=%d, want 2 and 1", summaryCalls.Load(), catalogCalls.Load())
+		}
+		close(releaseCatalog)
+		synctest.Wait()
+
+		current, _ := manager.GetByID(auth.ID)
+		if len(current.Quota.LookupWindows) != 1 || current.Quota.LookupWindows[0].UsedPercent == nil ||
+			math.Abs(*current.Quota.LookupWindows[0].UsedPercent-25) > 1e-9 {
+			t.Fatalf("fallback discarded by stalled summary retry: %+v", current.Quota.LookupWindows)
+		}
+		antigravityCapabilityMu.RLock()
+		expires := antigravityCapabilityCache[svc.antigravityCapabilityKey(auth)].summaryExpiresAt
+		antigravityCapabilityMu.RUnlock()
+		if !expires.After(time.Now()) {
+			t.Fatalf("fallback did not update summaryExpiresAt: %v", expires)
 		}
 	})
+}
+
+func TestAntigravityCanceledOnDemandRefreshDoesNotSuppressBackgroundFallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		resetAntigravityCapabilityCache()
+		defer resetAntigravityCapabilityCache()
+		defer setAntigravityTestProbeSlots()()
+		releaseCatalog := make(chan struct{})
+		releaseSummary := make(chan struct{})
+		oldTransport := http.DefaultTransport
+		http.DefaultTransport = antigravityReviewTransport(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
+				select {
+				case <-releaseSummary:
+				case <-req.Context().Done():
+					return nil, req.Context().Err()
+				}
+				return antigravityVersionTestResponse(req, http.StatusNotFound, ""), nil
+			}
+			select {
+			case <-releaseCatalog:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			return antigravityVersionTestResponse(req, http.StatusOK,
+				`{"models":{"gemini-3-flash":{"quotaInfo":{"remainingFraction":0.75,"resetTime":"2026-11-01T00:00:00Z"}}}}`), nil
+		})
+		defer func() { http.DefaultTransport = oldTransport }()
+		manager := coreauth.NewManager(nil, nil, nil)
+		svc := &Service{coreManager: manager}
+		priorUsed := 90.0
+		seed := antigravityTestAuth("canceled-on-demand", "https://quota.invalid")
+		seed.Quota.LookedUpAt = time.Now().Add(-time.Hour)
+		seed.Quota.LookupWindows = []coreauth.QuotaWindow{{Key: antigravitySummaryWindowPrefix + "gemini-5h", UsedPercent: &priorUsed}}
+		auth, err := manager.Register(t.Context(), seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer GlobalModelRegistry().UnregisterClient(auth.ID)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer func() { cancel(); svc.WaitAntigravityProbes() }()
+
+		// Block the catalog worker, then start background and on-demand refreshes sharing the same empty summary revision.
+		svc.queueAntigravityModelRefresh(ctx, auth, "antigravity")
+		synctest.Wait()
+		svc.queueAntigravitySummaryRefresh(ctx, auth)
+		refreshCtx, cancelRefresh := context.WithCancel(ctx)
+		refreshDone := make(chan error, 1)
+		go func() { refreshDone <- svc.NewAntigravityUsageLookup().Refresh(refreshCtx, auth) }()
+		synctest.Wait()
+		close(releaseSummary)
+		synctest.Wait()
+
+		// Hold the per-auth mutation lock so the on-demand refresh fetches catalog fallback and blocks before publishing.
+		lockHeld, releaseLock := make(chan struct{}), make(chan struct{})
+		var unlockOnce sync.Once
+		unlock := func() { unlockOnce.Do(func() { close(releaseLock) }) }
+		modifyDone := make(chan struct{})
+		go func() {
+			defer close(modifyDone)
+			_, _, _ = manager.Modify(t.Context(), auth.ID, 0, func(*coreauth.Auth) error {
+				close(lockHeld)
+				<-releaseLock
+				return nil
+			})
+		}()
+		defer func() {
+			unlock()
+			<-modifyDone
+		}()
+		<-lockHeld
+		close(releaseCatalog)
+		synctest.Wait()
+
+		// Cancel the on-demand refresh before it can publish, then release the mutation lock for the background fallback.
+		cancelRefresh()
+		if errRefresh := <-refreshDone; !errors.Is(errRefresh, context.Canceled) {
+			t.Fatalf("on-demand refresh err = %v, want context.Canceled", errRefresh)
+		}
+		unlock()
+		<-modifyDone
+		synctest.Wait()
+
+		current, _ := manager.GetByID(auth.ID)
+		if len(current.Quota.LookupWindows) != 1 || current.Quota.LookupWindows[0].UsedPercent == nil ||
+			math.Abs(*current.Quota.LookupWindows[0].UsedPercent-25) > 1e-9 {
+			t.Fatalf("canceled on-demand refresh suppressed background fallback: %+v", current.Quota.LookupWindows)
+		}
+		antigravityCapabilityMu.RLock()
+		expires := antigravityCapabilityCache[svc.antigravityCapabilityKey(auth)].summaryExpiresAt
+		antigravityCapabilityMu.RUnlock()
+		if !expires.After(time.Now()) {
+			t.Fatalf("background fallback did not renew summaryExpiresAt: %v", expires)
+		}
+	})
+}
+
+func TestAntigravityFallbackRenewsSummaryTTLWhenCatalogAlreadyPublishedQuota(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		resetAntigravityCapabilityCache()
+		defer resetAntigravityCapabilityCache()
+		defer setAntigravityTestProbeSlots()()
+		releaseSummary, releaseCatalog := make(chan struct{}), make(chan struct{})
+		var summaryOnce, catalogOnce sync.Once
+		unblockSummary := func() { summaryOnce.Do(func() { close(releaseSummary) }) }
+		unblockCatalog := func() { catalogOnce.Do(func() { close(releaseCatalog) }) }
+		var summaryCalls, catalogCalls atomic.Int32
+		oldTransport := http.DefaultTransport
+		http.DefaultTransport = antigravityReviewTransport(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == sdkauth.AntigravityQuotaSummaryPath {
+				summaryCalls.Add(1)
+				select {
+				case <-releaseSummary:
+				case <-req.Context().Done():
+					return nil, req.Context().Err()
+				}
+				return antigravityVersionTestResponse(req, http.StatusNotFound, ""), nil
+			}
+			catalogCalls.Add(1)
+			select {
+			case <-releaseCatalog:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			return antigravityVersionTestResponse(req, http.StatusOK,
+				`{"models":{"gemini-3-flash":{"quotaInfo":{"remainingFraction":0.75,"resetTime":"2026-11-01T00:00:00Z"}}}}`), nil
+		})
+		defer func() { http.DefaultTransport = oldTransport }()
+		manager := coreauth.NewManager(nil, nil, nil)
+		svc := &Service{coreManager: manager}
+		auth, err := manager.Register(t.Context(), antigravityTestAuth("fallback-reuses-catalog", "https://quota.invalid"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer GlobalModelRegistry().UnregisterClient(auth.ID)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer func() { cancel(); unblockSummary(); unblockCatalog(); svc.WaitAntigravityProbes() }()
+
+		// Summary starts first (lower revision), catalog starts second (higher revision) and holds the catalog worker.
+		svc.queueAntigravitySummaryRefresh(ctx, auth)
+		synctest.Wait()
+		svc.queueAntigravityModelRefresh(ctx, auth, "antigravity")
+		synctest.Wait()
+		// Empty summary queues fallback behind the running higher-revision catalog probe.
+		unblockSummary()
+		synctest.Wait()
+		// Catalog publishes quota at the higher revision; fallback reuses it with recorded=false, err=nil.
+		unblockCatalog()
+		svc.WaitAntigravityProbes()
+
+		antigravityCapabilityMu.RLock()
+		entry := antigravityCapabilityCache[svc.antigravityCapabilityKey(auth)]
+		antigravityCapabilityMu.RUnlock()
+		if !entry.summaryExpiresAt.After(time.Now()) || entry.summaryFulfilledRevision == 0 {
+			t.Fatalf("fallback did not renew summary TTL after catalog publish: expires=%v fulfilled=%d",
+				entry.summaryExpiresAt, entry.summaryFulfilledRevision)
+		}
+		if summaryCalls.Load() != 1 || catalogCalls.Load() != 1 {
+			t.Fatalf("initial probes = summary:%d catalog:%d, want 1 and 1", summaryCalls.Load(), catalogCalls.Load())
+		}
+		svc.refreshAntigravityModels(ctx)
+		svc.WaitAntigravityProbes()
+		if summaryCalls.Load() != 1 || catalogCalls.Load() != 1 {
+			t.Fatalf("immediate rescan repeated probes: summary:%d catalog:%d", summaryCalls.Load(), catalogCalls.Load())
+		}
+	})
+}
+
+func setAntigravityTestProbeSlots() func() {
+	catalog, summary := antigravityProbeSlots, antigravitySummaryProbeSlots
+	antigravityProbeSlots, antigravitySummaryProbeSlots = make(chan struct{}, 1), make(chan struct{}, 1)
+	return func() { antigravityProbeSlots, antigravitySummaryProbeSlots = catalog, summary }
+}
+
+func TestAntigravityUsageBackgroundQueuesCancel(t *testing.T) {
+	for _, shutdown := range []bool{true, false} {
+		t.Run(fmt.Sprintf("shutdown=%t", shutdown), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				resetAntigravityCapabilityCache()
+				defer resetAntigravityCapabilityCache()
+				defer setAntigravityTestProbeSlots()()
+				oldTransport := http.DefaultTransport
+				var requests, cancellations atomic.Int32
+				http.DefaultTransport = antigravityReviewTransport(func(req *http.Request) (*http.Response, error) {
+					requests.Add(1)
+					<-req.Context().Done()
+					cancellations.Add(1)
+					return nil, req.Context().Err()
+				})
+				defer func() { http.DefaultTransport = oldTransport }()
+				lifetime, cancel := context.WithCancel(t.Context())
+				manager := coreauth.NewManager(nil, nil, nil)
+				svc := &Service{coreManager: manager, antigravityContext: lifetime, runCancel: cancel}
+				defer func() { cancel(); svc.WaitAntigravityProbes() }()
+				for _, id := range []string{"connected", "waiting-for-slots"} {
+					auth, err := manager.Register(t.Context(), antigravityTestAuth(id, "https://quota.invalid"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer GlobalModelRegistry().UnregisterClient(auth.ID)
+					svc.asyncProbeAntigravityCapabilities(t.Context(), auth, "antigravity")
+					synctest.Wait()
+					svc.asyncProbeAntigravityCapabilities(t.Context(), auth, "antigravity")
+				}
+				synctest.Wait()
+				svc.antigravityProbeMu.Lock()
+				catalogQueued := svc.antigravityRefreshPending["waiting-for-slots"] != nil
+				summaryQueued := svc.antigravitySummaryPending["waiting-for-slots"] != nil
+				svc.antigravityProbeMu.Unlock()
+				if connected := requests.Load(); connected != 2 || !catalogQueued || !summaryQueued {
+					t.Fatalf("connected=%d catalog queued=%t summary queued=%t", connected, catalogQueued, summaryQueued)
+				}
+				if shutdown {
+					if err := svc.Shutdown(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					manager.Remove(t.Context(), "waiting-for-slots")
+					synctest.Wait()
+					manager.Remove(t.Context(), "connected")
+				}
+				svc.WaitAntigravityProbes()
+				svc.antigravityProbeMu.Lock()
+				remaining := len(svc.antigravityRefreshPending) + len(svc.antigravitySummaryPending) + len(svc.antigravityAccountProbes)
+				svc.antigravityProbeMu.Unlock()
+				if connected, canceled := requests.Load(), cancellations.Load(); connected != 2 || canceled != connected || remaining != 0 || len(antigravityProbeSlots) != 0 || len(antigravitySummaryProbeSlots) != 0 {
+					t.Fatalf("connected=%d canceled=%d remaining=%d catalog slots=%d summary slots=%d",
+						connected, canceled, remaining, len(antigravityProbeSlots), len(antigravitySummaryProbeSlots))
+				}
+			})
+		})
+	}
 }
 
 func TestAntigravityUsageStaleFallbackDoesNotOverwriteNewerSummary(t *testing.T) {
@@ -513,10 +854,11 @@ func TestAntigravityBackgroundUsageFetchesCatalogFallbackWhenCacheWarmOrRouteCha
 		if err != nil {
 			t.Fatal(err)
 		}
-		oldKey, oldHints := svc.fetchAntigravityModelCapabilityHints(t.Context(), auth)
+		svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
 		ua = "antigravity/hub/2.34.0 (new)"
 		now = now.Add(time.Second)
-		svc.refreshAntigravityBackgroundUsage(t.Context(), auth, oldKey, oldHints)
+		svc.queueAntigravitySummaryRefresh(t.Context(), auth)
+		svc.WaitAntigravityProbes()
 		current, _ := manager.GetByID(auth.ID)
 		if catalogCalls != 2 || len(current.Quota.LookupWindows) != 1 || current.Quota.LookupWindows[0].UsedPercent == nil ||
 			math.Abs(*current.Quota.LookupWindows[0].UsedPercent-20) > 1e-9 {
