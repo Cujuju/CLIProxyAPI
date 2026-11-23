@@ -152,6 +152,7 @@ type antigravityModelCapabilityHints struct {
 	summaryRequestedAt time.Time
 	lookedUpAt         time.Time
 	revision           uint64
+	catalogFetched     bool
 }
 
 type antigravityModelProbeResult struct {
@@ -359,8 +360,62 @@ func (s *Service) fetchAntigravityModelHints(ctx context.Context, auth *coreauth
 			antigravityCapabilityCache[key] = entry
 		}
 		antigravityCapabilityMu.Unlock()
+		// Order fallback publication by the empty summary's timestamp and revision so a newer summary wins.
+		catalog.lookedUpAt, catalog.revision = summary.lookedUpAt, summary.revision
 	}
 	return key, catalog, err
+}
+
+func (s *Service) refreshAntigravityBackgroundUsage(ctx context.Context, auth *coreauth.Auth, catalogKey string, catalogHints antigravityModelCapabilityHints) {
+	usage := s.NewAntigravityUsageLookup()
+	if !usage.Eligible(auth) || s.coreManager == nil {
+		return
+	}
+	key := s.antigravityCapabilityKey(auth)
+	token, _ := auth.Metadata["access_token"].(string)
+	token = strings.TrimSpace(token)
+	failureKey := antigravityTokenFailureKey(key, token)
+	antigravityCapabilityMu.RLock()
+	due := !antigravityNowFunc().Before(antigravitySummaryRefreshAtLocked(key, failureKey))
+	antigravityCapabilityMu.RUnlock()
+	if !due {
+		return
+	}
+	project, _ := auth.Metadata["project_id"].(string)
+	req := sdkauth.AntigravityModelProbeRequest{
+		BaseURLs: antigravityQuotaSummaryBaseURLs(auth), ProxyURL: s.antigravityModelFetchProxyURL(auth),
+		AccessToken: token, ProjectID: project, UserAgent: antigravityModelUserAgent(),
+	}
+	routeKey := antigravityCapabilityKeyForRoute(auth, req.BaseURLs, req.ProxyURL, req.UserAgent)
+	summary, err := s.fetchAntigravityProbeHints(ctx, auth, req, routeKey, sdkauth.AntigravityQuotaSummaryPath, true)
+	if err != nil {
+		return
+	}
+	if len(summary.quotaBuckets) > 0 {
+		if windows := summary.quotaWindows(); len(windows) > 0 {
+			_ = s.recordAntigravityQuota(ctx, auth, routeKey, windows, summary.lookedUpAt, summary.revision, false)
+		}
+		return
+	}
+	fallback := catalogHints
+	if catalogKey != routeKey || !catalogHints.catalogFetched {
+		catalogReq := req
+		catalogReq.BaseURLs = req.BaseURLs[:1]
+		fallback, err = s.fetchAntigravityProbeHints(ctx, auth, catalogReq, routeKey, antigravityModelsPath, true)
+		if err != nil {
+			return
+		}
+	}
+	antigravityCapabilityMu.Lock()
+	entry := antigravityCapabilityCache[routeKey]
+	if entry.summaryProbe.revision == summary.revision {
+		entry.summaryExpiresAt = antigravityNowFunc().Add(antigravityCapabilityCacheTTL)
+		antigravityCapabilityCache[routeKey] = entry
+	}
+	antigravityCapabilityMu.Unlock()
+	if windows := fallback.quotaWindows(); len(windows) > 0 {
+		_ = s.recordAntigravityQuota(ctx, auth, routeKey, windows, summary.lookedUpAt, summary.revision, false)
+	}
 }
 
 func (s *Service) fetchAntigravityProbeHints(ctx context.Context, auth *coreauth.Auth, req sdkauth.AntigravityModelProbeRequest, cacheKey, path string, bypassTTL bool) (antigravityModelCapabilityHints, error) {
@@ -495,6 +550,7 @@ func finishAntigravityModelProbe(ctx context.Context, cacheKey, tokenFailureKey,
 				current.summaryExpiresAt = now.Add(antigravityCapabilityCacheTTL)
 			}
 		} else {
+			hints.catalogFetched = true
 			current.hints = antigravityModelCapabilityHints{
 				ModelIDs: hints.ModelIDs, WebSearchModelIDs: hints.WebSearchModelIDs,
 				revision: hints.revision, lookedUpAt: hints.lookedUpAt,

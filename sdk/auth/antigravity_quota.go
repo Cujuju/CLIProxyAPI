@@ -30,22 +30,26 @@ type AntigravityQuotaBucket struct {
 func FetchAntigravityQuotaSummary(ctx context.Context, req AntigravityModelProbeRequest) ([]AntigravityQuotaBucket, AntigravityProbeStatus) {
 	var merged []AntigravityQuotaBucket
 	seen := make(map[string]struct{})
-	status := AntigravityProbeStatusTransientError
+	hasSuccess := false
+	hasFailure := false
+	failureStatus := AntigravityProbeStatusTransientError
 	for _, baseURL := range req.BaseURLs {
 		hostReq := req
 		hostReq.BaseURLs = []string{baseURL}
 		buckets, hostStatus := fetchAntigravityQuotaSummary(ctx, hostReq)
 		switch hostStatus {
 		case AntigravityProbeStatusSuccess:
-			status = hostStatus
+			hasSuccess = true
 		case AntigravityProbeStatusAuthError:
-			if status != AntigravityProbeStatusSuccess {
-				status = hostStatus
-			}
+			hasFailure = true
+			failureStatus = hostStatus
 		case AntigravityProbeStatusForbidden:
-			if status == AntigravityProbeStatusTransientError {
-				status = hostStatus
+			hasFailure = true
+			if failureStatus == AntigravityProbeStatusTransientError {
+				failureStatus = hostStatus
 			}
+		default:
+			hasFailure = true
 		}
 		for _, bucket := range buckets {
 			if _, exists := seen[bucket.ID]; !exists {
@@ -54,7 +58,16 @@ func FetchAntigravityQuotaSummary(ctx context.Context, req AntigravityModelProbe
 			}
 		}
 	}
-	return merged, status
+	if len(merged) > 0 {
+		return merged, AntigravityProbeStatusSuccess
+	}
+	if hasFailure {
+		return nil, failureStatus
+	}
+	if hasSuccess {
+		return nil, AntigravityProbeStatusSuccess
+	}
+	return nil, AntigravityProbeStatusTransientError
 }
 
 func fetchAntigravityQuotaSummary(ctx context.Context, req AntigravityModelProbeRequest) ([]AntigravityQuotaBucket, AntigravityProbeStatus) {

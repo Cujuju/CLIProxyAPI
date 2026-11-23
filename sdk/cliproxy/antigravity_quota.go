@@ -97,9 +97,7 @@ func AntigravityQuotaWindows(quotas map[string]sdkauth.AntigravityModelQuota) []
 		return nil
 	}
 	families := make(map[string]coreauth.QuotaWindow)
-	// Visit model IDs in order so the first wins when usage and reset time tie.
-	for _, id := range slices.Sorted(maps.Keys(quotas)) {
-		quota := quotas[id]
+	for id, quota := range quotas {
 		key, label := antigravityCatalogFamily(id, quota.ModelProvider)
 		if key == "" {
 			continue

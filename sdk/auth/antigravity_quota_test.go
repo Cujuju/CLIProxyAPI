@@ -145,8 +145,10 @@ func TestFetchAntigravityQuotaSummaryCombinesHostFailures(t *testing.T) {
 		second int
 		want   AntigravityProbeStatus
 	}{
-		{"missing overrides unauthorized", http.StatusUnauthorized, http.StatusNotFound, AntigravityProbeStatusSuccess},
-		{"empty overrides forbidden", http.StatusNoContent, http.StatusForbidden, AntigravityProbeStatusSuccess},
+		{"missing does not mask unauthorized", http.StatusNotFound, http.StatusUnauthorized, AntigravityProbeStatusAuthError},
+		{"missing does not mask forbidden", http.StatusNotFound, http.StatusForbidden, AntigravityProbeStatusForbidden},
+		{"missing does not mask transient", http.StatusNotFound, http.StatusServiceUnavailable, AntigravityProbeStatusTransientError},
+		{"both missing permits fallback", http.StatusNotFound, http.StatusNoContent, AntigravityProbeStatusSuccess},
 		{"unauthorized overrides forbidden", http.StatusForbidden, http.StatusUnauthorized, AntigravityProbeStatusAuthError},
 		{"forbidden overrides transient", http.StatusForbidden, http.StatusServiceUnavailable, AntigravityProbeStatusForbidden},
 	} {
