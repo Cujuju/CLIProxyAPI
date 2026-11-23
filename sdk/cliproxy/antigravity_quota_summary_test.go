@@ -127,9 +127,11 @@ func TestAntigravityUsageSummaryWindows(t *testing.T) {
 	if paths := probePaths(); !slices.Equal(paths, wantPaths) || !fallback.Quota.LookedUpAt.Equal(now) || len(windows) != 2 {
 		t.Fatalf("expected fresh fallback snapshot, paths=%v quota=%+v", paths, fallback.Quota)
 	}
-	if !windows[0].Scoped || !windows[1].Scoped || windows[0].Key == windows[1].Key ||
+	if !windows[0].Scoped || !windows[1].Scoped ||
+		windows[0].Key != "ag:gemini-pro" || windows[0].Label != "gemini-pro" ||
+		windows[1].Key != "weekly:ag:gemini-pro" || windows[1].Label != "gemini-pro · Weekly" ||
 		windows[0].Duration != 0 || windows[1].Duration != 604800*time.Second ||
-		windows[1].Status != "rejected" || windows[1].Label != "Gemini · Weekly" {
+		windows[1].Status != coreauth.QuotaWindowStatusRejected {
 		t.Fatalf("unexpected model fallback windows %+v", windows)
 	}
 }
