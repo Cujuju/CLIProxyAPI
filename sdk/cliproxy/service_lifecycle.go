@@ -273,6 +273,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if ctx == nil {
 			ctx = context.Background()
 		}
+		unregisterCodexLogin(s.accessManager)
 
 		s.homeMu.Lock()
 		runCancel := s.runCancel

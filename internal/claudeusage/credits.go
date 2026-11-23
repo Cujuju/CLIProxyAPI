@@ -140,24 +140,36 @@ func parseCredits(raw json.RawMessage, now time.Time) creditState {
 	return state
 }
 
-// storeCredits records a lookup's reset credits. It skips the write when nothing changed and the
-// stored check is younger than MaxLookupAge, so frequent lookups don't rewrite the auth file.
+// storeCredits records a lookup's reset credits under the mutation lock. It checks both the live
+// lookup watermark (Quota.LookedUpAt) and persisted CheckedAt so older in-flight lookups cannot
+// overwrite newer results, while leaving ineligible or recently-unchanged auth files untouched.
 func (p *Poller) storeCredits(ctx context.Context, auth *coreauth.Auth, credits *resetcredits.Credits, lookedUpAt time.Time) {
-	stored, had := resetcredits.Of(auth)
-	if credits == nil && !had {
-		return
-	}
-	if credits != nil && had && stored.Same(*credits) && lookedUpAt.Sub(stored.CheckedAt) < MaxLookupAge {
-		return
-	}
+	errSkipCredits := errors.New("skip credit write")
 	_, _, errModify := p.manager.Modify(ctx, auth.ID, 0, func(current *coreauth.Auth) error {
+		if !Eligible(current) ||
+			(auth.RegistrationEpoch != 0 && current.RegistrationEpoch != auth.RegistrationEpoch) {
+			return coreauth.ErrQuotaLookupCredentialChanged
+		}
+		if lookedUpAt.Before(current.Quota.LookedUpAt) {
+			return errSkipCredits
+		}
+		if prevChecked, okChecked := resetcredits.CheckedAt(current); okChecked && lookedUpAt.Before(prevChecked) {
+			return errSkipCredits
+		}
+		stored, had := resetcredits.Of(current)
+		if credits == nil && !had {
+			return errSkipCredits
+		}
+		if credits != nil && had && stored.Same(*credits) && lookedUpAt.Sub(stored.CheckedAt) < MaxLookupAge {
+			return errSkipCredits
+		}
 		if current.Metadata == nil {
 			current.Metadata = map[string]any{}
 		}
 		resetcredits.Store(current.Metadata, lookedUpAt, credits)
 		return nil
 	})
-	if errModify != nil {
+	if errModify != nil && !errors.Is(errModify, errSkipCredits) {
 		log.Warnf("claude reset credits for auth_index=%s not stored: %v", auth.EnsureIndex(), errModify)
 	}
 }

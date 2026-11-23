@@ -25,10 +25,43 @@ type sessionAffinityPersister struct {
 	loaded   bool
 }
 
+// swap transfers live bindings from the current selector to next, publishes next on manager,
+// and marks next current under p.mu so a concurrent periodic sync cannot revert to the old selector.
+func (p *sessionAffinityPersister) swap(manager *coreauth.Manager, next coreauth.Selector) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	prev := manager.Selector()
+	if prevAff, okPrev := prev.(*coreauth.SessionAffinitySelector); okPrev && prevAff != nil {
+		if nextAff, okNext := next.(*coreauth.SessionAffinitySelector); okNext && nextAff != nil && nextAff != prevAff {
+			nextAff.RestoreSessionBindings(prevAff.SessionBindings())
+			if p.loaded {
+				p.selector = nextAff
+				p.records = nextAff.SessionBindings()
+			}
+		}
+	}
+	manager.SetSelector(next)
+}
+
+// syncCurrent reads the live selector from manager under p.mu so a stale selector can never be synced.
+func (p *sessionAffinityPersister) syncCurrent(manager *coreauth.Manager, store *coreauth.FileSessionAffinityStore) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	selector, ok := manager.Selector().(*coreauth.SessionAffinitySelector)
+	if !ok || selector == nil {
+		return
+	}
+	p.syncLocked(selector, store)
+}
+
 // sync restores carried bindings into a selector it has not seen, then saves its live bindings.
 func (p *sessionAffinityPersister) sync(selector *coreauth.SessionAffinitySelector, store *coreauth.FileSessionAffinityStore) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.syncLocked(selector, store)
+}
+
+func (p *sessionAffinityPersister) syncLocked(selector *coreauth.SessionAffinitySelector, store *coreauth.FileSessionAffinityStore) {
 	if !p.loaded {
 		records, errLoad := store.Load()
 		if errLoad != nil {
@@ -37,6 +70,9 @@ func (p *sessionAffinityPersister) sync(selector *coreauth.SessionAffinitySelect
 		p.records, p.loaded = records, true
 	}
 	if selector != p.selector {
+		if p.selector != nil {
+			p.records = p.selector.SessionBindings()
+		}
 		if restored := selector.RestoreSessionBindings(p.records); restored > 0 {
 			log.Infof("session affinity: restored %d binding(s) from %s", restored, store.Path())
 		}
@@ -66,11 +102,10 @@ func (s *Service) syncSessionAffinity() {
 		return
 	}
 	store := sessionAffinityStore(s.currentConfig())
-	selector, ok := s.coreManager.Selector().(*coreauth.SessionAffinitySelector)
-	if store == nil || !ok || selector == nil {
+	if store == nil {
 		return
 	}
-	s.affinityPersister.sync(selector, store)
+	s.affinityPersister.syncCurrent(s.coreManager, store)
 }
 
 // runSessionAffinitySaving saves bindings on an interval until ctx ends.

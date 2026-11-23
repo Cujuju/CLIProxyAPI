@@ -66,6 +66,19 @@ func (c Credits) Same(other Credits) bool {
 		slices.EqualFunc(c.Expiries, other.Expiries, time.Time.Equal) && reflect.DeepEqual(c.Grants, other.Grants)
 }
 
+// CheckedAt returns when reset credits were last checked on auth, even when the lookup cleared counts.
+func CheckedAt(auth *coreauth.Auth) (time.Time, bool) {
+	if auth == nil || auth.Metadata == nil {
+		return time.Time{}, false
+	}
+	checkedText, _ := auth.Metadata[checkedAtKey].(string)
+	checkedAt, errParse := time.Parse(time.RFC3339Nano, strings.TrimSpace(checkedText))
+	if errParse != nil {
+		return time.Time{}, false
+	}
+	return checkedAt, true
+}
+
 // Of returns the credential's last looked-up reset credits; false when never reported.
 func Of(auth *coreauth.Auth) (Credits, bool) {
 	if auth == nil || auth.Metadata == nil {
@@ -73,9 +86,8 @@ func Of(auth *coreauth.Auth) (Credits, bool) {
 	}
 	available, okAvailable := metadataInt(auth.Metadata[availableKey])
 	applicable, okApplicable := metadataInt(auth.Metadata[applicableKey])
-	checkedText, _ := auth.Metadata[checkedAtKey].(string)
-	checkedAt, errParse := time.Parse(time.RFC3339, strings.TrimSpace(checkedText))
-	if !okAvailable || !okApplicable || errParse != nil {
+	checkedAt, okChecked := CheckedAt(auth)
+	if !okAvailable || !okApplicable || !okChecked {
 		return Credits{}, false
 	}
 	return Credits{Available: available, Applicable: applicable, CheckedAt: checkedAt, Expiries: metadataTimes(auth.Metadata[expiriesKey]), Grants: metadataGrants(auth.Metadata[grantsKey])}, true
@@ -84,7 +96,7 @@ func Of(auth *coreauth.Auth) (Credits, bool) {
 // Store records a lookup made at checkedAt into metadata. Nil credits mean the account reports none,
 // which clears the counts; credits.CheckedAt is ignored.
 func Store(metadata map[string]any, checkedAt time.Time, credits *Credits) {
-	metadata[checkedAtKey] = checkedAt.UTC().Format(time.RFC3339)
+	metadata[checkedAtKey] = checkedAt.UTC().Format(time.RFC3339Nano)
 	if credits == nil {
 		delete(metadata, availableKey)
 		delete(metadata, applicableKey)

@@ -40,13 +40,49 @@ type Accounts func(accountID, userID string) (authID string, ok bool)
 var (
 	activeMu sync.Mutex
 	active   *provider
+	scoped   = map[*sdkaccess.Manager]*provider{}
 )
 
-// Configure sets where the provider finds the proxy's Codex credentials. Call before Sync.
+// Configure sets where the process-default provider finds Codex credentials. Call before Sync.
 func Configure(accounts Accounts) {
 	activeMu.Lock()
 	defer activeMu.Unlock()
 	active = newProvider(accounts, newKeySet(openAIKeysURL, &http.Client{}, time.Now), time.Now)
+}
+
+// ConfigureFor binds a Codex login provider to manager so multiple SDK services stay isolated.
+func ConfigureFor(manager *sdkaccess.Manager, accounts Accounts) {
+	if manager == nil {
+		return
+	}
+	activeMu.Lock()
+	defer activeMu.Unlock()
+	scoped[manager] = newProvider(accounts, newKeySet(openAIKeysURL, &http.Client{}, time.Now), time.Now)
+}
+
+// UnregisterFor drops the manager-scoped Codex login provider on service shutdown.
+func UnregisterFor(manager *sdkaccess.Manager) {
+	if manager == nil {
+		return
+	}
+	activeMu.Lock()
+	defer activeMu.Unlock()
+	delete(scoped, manager)
+}
+
+// SyncFor returns manager's Codex login provider when client keys are required, or nil otherwise.
+func SyncFor(manager *sdkaccess.Manager, cfg *sdkconfig.SDKConfig) sdkaccess.Provider {
+	if manager == nil {
+		return nil
+	}
+	activeMu.Lock()
+	p := scoped[manager]
+	activeMu.Unlock()
+	if p == nil || !requiresClientKeys(cfg) {
+		return nil
+	}
+	p.keys.setClient(util.SetProxy(cfg, &http.Client{}))
+	return p
 }
 
 // Sync registers the provider only while client keys are required, so it never closes an open proxy.

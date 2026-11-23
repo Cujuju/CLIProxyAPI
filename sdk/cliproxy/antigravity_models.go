@@ -123,9 +123,17 @@ func antigravityTokenFailureKey(cacheKey, accessToken string) string {
 	return cacheKey + fmt.Sprintf("/%x", sha256.Sum256([]byte(accessToken)))
 }
 
+func antigravityAuthErrorFailureKey(tokenFailureKey, path string) string {
+	if path == "" || path == antigravityModelsPath {
+		return tokenFailureKey
+	}
+	return tokenFailureKey + ":auth:" + path
+}
+
 func antigravityFailureNextRetryLocked(cacheKey, tokenFailureKey, path string) time.Time {
 	nextRetry := antigravityAuthFailureCache[cacheKey+path].nextRetry
-	for _, key := range []string{tokenFailureKey, tokenFailureKey + path} {
+	authKey := antigravityAuthErrorFailureKey(tokenFailureKey, path)
+	for _, key := range []string{authKey, tokenFailureKey + path} {
 		if retry := antigravityAuthFailureCache[key].nextRetry; retry.After(nextRetry) {
 			nextRetry = retry
 		}
@@ -533,6 +541,7 @@ func finishAntigravityModelProbe(ctx context.Context, cacheKey, tokenFailureKey,
 		}
 	}
 	forbiddenKey, transientKey := cacheKey+path, tokenFailureKey+path
+	authErrorKey := antigravityAuthErrorFailureKey(tokenFailureKey, path)
 	summary := path == sdkauth.AntigravityQuotaSummaryPath
 	if status == antigravityProbeStatusSuccess && (summary || hints.ModelIDs != nil) {
 		delete(antigravityAuthFailureCache, transientKey)
@@ -545,8 +554,8 @@ func finishAntigravityModelProbe(ctx context.Context, cacheKey, tokenFailureKey,
 		}
 		antigravityCapabilityCache[cacheKey] = current
 		// An unsupported summary does not validate the token. An overlapping probe may also have recorded a new 401.
-		if (!summary || len(hints.quotaBuckets) > 0) && !hints.lookedUpAt.Before(antigravityAuthFailureCache[tokenFailureKey].nextRetry) {
-			delete(antigravityAuthFailureCache, tokenFailureKey)
+		if (!summary || len(hints.quotaBuckets) > 0) && !hints.lookedUpAt.Before(antigravityAuthFailureCache[authErrorKey].nextRetry) {
+			delete(antigravityAuthFailureCache, authErrorKey)
 		}
 		return hints, nil
 	}
@@ -561,11 +570,11 @@ func finishAntigravityModelProbe(ctx context.Context, cacheKey, tokenFailureKey,
 		probeErr = errors.New("antigravity model probe forbidden (403)")
 	case antigravityProbeStatusAuthError:
 		// 401 unauthorized failures back off longer for the same token while retrying immediately on token refresh.
-		antigravityAuthFailureCache[tokenFailureKey] = nextAntigravityAuthErrorFailure(antigravityAuthFailureCache[tokenFailureKey], now, rand.Int64N)
+		antigravityAuthFailureCache[authErrorKey] = nextAntigravityAuthErrorFailure(antigravityAuthFailureCache[authErrorKey], now, rand.Int64N)
 		probeErr = errors.New("antigravity model probe unauthorized (401)")
 	default:
 		previous := antigravityAuthFailureCache[transientKey]
-		if authFailure := antigravityAuthFailureCache[tokenFailureKey]; authFailure.failures > previous.failures {
+		if authFailure := antigravityAuthFailureCache[authErrorKey]; authFailure.failures > previous.failures {
 			previous = authFailure
 		}
 		antigravityAuthFailureCache[transientKey] = nextAntigravityFailure(previous, now, rand.Int64N)

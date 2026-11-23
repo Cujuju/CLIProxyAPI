@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
 	bolt "go.etcd.io/bbolt"
@@ -35,7 +36,9 @@ func (s *CaptureSpool) open() error {
 	if err = os.MkdirAll(s.dir, 0700); err != nil {
 		return errors.New("capture storage unavailable")
 	}
-	s.db, err = bolt.Open(filepath.Join(s.dir, "captures.db"), 0600, nil)
+	// Bound bolt.Open lock wait so another process holding captures.db cannot stall requests.
+	const captureDBOpenTimeout = 2 * time.Second
+	s.db, err = bolt.Open(filepath.Join(s.dir, "captures.db"), 0600, &bolt.Options{Timeout: captureDBOpenTimeout})
 	if err != nil {
 		return errors.New("capture storage unavailable")
 	}

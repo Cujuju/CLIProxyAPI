@@ -3,6 +3,7 @@ package codexusage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -108,15 +109,24 @@ func (limit *rateLimit) hasFlags() bool {
 	return limit != nil && (limit.Allowed != nil || limit.LimitReached != nil)
 }
 
+func (window *usageWindow) isEmittable() bool {
+	return window != nil && window.UsedPercent != nil && window.ResetAt > 0 && window.LimitWindowSeconds/int64(time.Minute/time.Second) > 0
+}
+
 func (limit *rateLimit) appendQuotaWindows(windows []coreauth.QuotaWindow, keyPrefix string, lookedUpAt time.Time) []coreauth.QuotaWindow {
 	if limit == nil {
 		return windows
 	}
-	windows = limit.PrimaryWindow.appendQuotaWindow(windows, keyPrefix+"primary", lookedUpAt)
-	return limit.SecondaryWindow.appendQuotaWindow(windows, keyPrefix+"secondary", lookedUpAt)
+	rejected := (limit.LimitReached != nil && *limit.LimitReached) || (limit.Allowed != nil && !*limit.Allowed)
+	primaryFull := limit.PrimaryWindow.isEmittable() && *limit.PrimaryWindow.UsedPercent >= 100
+	secondaryFull := limit.SecondaryWindow.isEmittable() && *limit.SecondaryWindow.UsedPercent >= 100
+	// Only an emitted full window attributes group-level rejection; otherwise mark emitted windows rejected.
+	markAll := rejected && !primaryFull && !secondaryFull
+	windows = limit.PrimaryWindow.appendQuotaWindow(windows, keyPrefix+"primary", lookedUpAt, rejected && (primaryFull || markAll))
+	return limit.SecondaryWindow.appendQuotaWindow(windows, keyPrefix+"secondary", lookedUpAt, rejected && (secondaryFull || markAll))
 }
 
-func (window *usageWindow) appendQuotaWindow(windows []coreauth.QuotaWindow, key string, lookedUpAt time.Time) []coreauth.QuotaWindow {
+func (window *usageWindow) appendQuotaWindow(windows []coreauth.QuotaWindow, key string, lookedUpAt time.Time, rejected bool) []coreauth.QuotaWindow {
 	if window == nil || window.UsedPercent == nil || window.ResetAt <= 0 {
 		return windows
 	}
@@ -124,7 +134,11 @@ func (window *usageWindow) appendQuotaWindow(windows []coreauth.QuotaWindow, key
 	if minutes <= 0 {
 		return windows
 	}
-	return append(windows, coreauth.NewCodexQuotaWindow(key, "", int(minutes), window.UsedPercent, time.Unix(window.ResetAt, 0), lookedUpAt))
+	w := coreauth.NewCodexQuotaWindow(key, "", int(minutes), window.UsedPercent, time.Unix(window.ResetAt, 0), lookedUpAt)
+	if rejected {
+		w.Status = coreauth.QuotaWindowStatusRejected
+	}
+	return append(windows, w)
 }
 
 // FetchFunc returns the raw document at url for one credential.
@@ -210,6 +224,8 @@ func (t *Tracker) RefreshAll(ctx context.Context) map[string]error {
 func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	lookupCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	// Conservatively date the lookup before dispatch so a live 429 during fetch is never lifted by older headroom.
+	lookedUpAt := t.now()
 	body, errFetch := t.fetch(lookupCtx, t.config(), auth, usageURL)
 	var doc usageDocument
 	if errFetch == nil {
@@ -219,7 +235,6 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 		t.setBackoff(auth.ID, t.now().Add(MaxAge))
 		return errFetch
 	}
-	lookedUpAt := t.now()
 	if windows, ok := doc.quotaWindows(lookedUpAt); ok {
 		accept := func(current *coreauth.Auth) (bool, error) {
 			if !strings.EqualFold(strings.TrimSpace(current.Provider), "codex") ||
@@ -243,13 +258,27 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	if doc.ResetCredits != nil {
 		credits = &resetcredits.Credits{Available: doc.ResetCredits.Available, Applicable: doc.ResetCredits.Applicable, Expiries: t.lookUpExpiries(ctx, auth, doc)}
 	}
+	errSkipCredits := errors.New("skip stale credit write")
 	_, _, errModify := t.manager.Modify(ctx, auth.ID, 0, func(current *coreauth.Auth) error {
+		if !strings.EqualFold(strings.TrimSpace(current.Provider), "codex") ||
+			(auth.RegistrationEpoch != 0 && current.RegistrationEpoch != auth.RegistrationEpoch) {
+			return coreauth.ErrQuotaLookupCredentialChanged
+		}
+		if lookedUpAt.Before(current.Quota.LookedUpAt) {
+			return errSkipCredits
+		}
+		if prevChecked, okChecked := resetcredits.CheckedAt(current); okChecked && lookedUpAt.Before(prevChecked) {
+			return errSkipCredits
+		}
 		if current.Metadata == nil {
 			current.Metadata = map[string]any{}
 		}
 		resetcredits.Store(current.Metadata, lookedUpAt, credits)
 		return nil
 	})
+	if errors.Is(errModify, errSkipCredits) {
+		return nil
+	}
 	if errModify == nil {
 		t.setBackoff(auth.ID, time.Time{})
 		t.mu.Lock()

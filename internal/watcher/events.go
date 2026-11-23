@@ -26,19 +26,85 @@ func matchProvider(provider string, targets []string) (string, bool) {
 	return p, false
 }
 
+func (w *Watcher) resolveConfigWatchTargets() (dirs, targets []string, ok bool) {
+	dirs = []string{filepath.Dir(w.configPath)}
+	targets = []string{w.configPath}
+	resolved, errEval := filepath.EvalSymlinks(w.configPath)
+	if errEval != nil {
+		return dirs, targets, false
+	}
+	if resolved != "" && !w.sameNormalizedAuthPath(resolved, w.configPath) {
+		targets = append(targets, resolved)
+		resolvedDir := filepath.Dir(resolved)
+		if !w.sameNormalizedAuthPath(resolvedDir, dirs[0]) {
+			dirs = append(dirs, resolvedDir)
+		}
+	}
+	return dirs, targets, true
+}
+
+// syncConfigWatch reconciles watched config directories when a config symlink is retargeted.
+// If EvalSymlinks fails (e.g. target transiently removed during atomic replace), existing watches
+// stay intact until the file reappears.
+func (w *Watcher) syncConfigWatch() {
+	if w == nil || w.watcher == nil || w.stopped.Load() {
+		return
+	}
+	dirs, targets, ok := w.resolveConfigWatchTargets()
+	if !ok {
+		return
+	}
+	w.watchMu.Lock()
+	defer w.watchMu.Unlock()
+	if !w.started || w.stopped.Load() {
+		return
+	}
+	watchedDirs := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if w.isWatchedConfigDirLocked(dir) {
+			watchedDirs = append(watchedDirs, dir)
+			continue
+		}
+		if errAdd := w.watcher.Add(dir); errAdd != nil {
+			log.Errorf("failed to watch config directory %s: %v", dir, errAdd)
+			continue
+		}
+		watchedDirs = append(watchedDirs, dir)
+	}
+	for _, oldDir := range w.watchedConfigDirs {
+		keep := false
+		for _, dir := range watchedDirs {
+			if w.sameNormalizedAuthPath(oldDir, dir) {
+				keep = true
+				break
+			}
+		}
+		if !keep && (w.watchedAuthDir == "" || !w.sameNormalizedAuthPath(oldDir, w.watchedAuthDir)) {
+			_ = w.watcher.Remove(oldDir)
+		}
+	}
+	w.watchedConfigDirs = watchedDirs
+	w.watchedConfigTargets = targets
+}
+
 func (w *Watcher) start(ctx context.Context) error {
 	if _, errStatConfig := os.Stat(w.configPath); errStatConfig != nil {
 		return errStatConfig
 	}
-	// Atomic saves replace the file's identity. Watch its directory so later saves remain visible.
-	configDir := filepath.Dir(w.configPath)
-	if errAddConfig := w.watcher.Add(configDir); errAddConfig != nil {
-		log.Errorf("failed to watch config directory %s: %v", configDir, errAddConfig)
-		return errAddConfig
+	// Atomic saves replace the file's identity. Watch the config's directory and,
+	// if it is a symlink into another directory, the resolved target's directory too.
+	configDirs, configTargets, _ := w.resolveConfigWatchTargets()
+	for _, dir := range configDirs {
+		if errAddConfig := w.watcher.Add(dir); errAddConfig != nil {
+			log.Errorf("failed to watch config directory %s: %v", dir, errAddConfig)
+			return errAddConfig
+		}
+		log.Debugf("watching config directory: %s", dir)
 	}
-	log.Debugf("watching config directory: %s", configDir)
 
 	w.watchMu.Lock()
+	w.watchedConfigDirs = configDirs
+	w.watchedConfigTargets = configTargets
 	authDir := w.currentAuthDir()
 	if errAddAuthDir := w.watcher.Add(authDir); errAddAuthDir != nil {
 		w.watchMu.Unlock()
@@ -56,6 +122,30 @@ func (w *Watcher) start(ctx context.Context) error {
 	return nil
 }
 
+func (w *Watcher) isWatchedConfigDirLocked(dir string) bool {
+	for _, cfgDir := range w.watchedConfigDirs {
+		if w.sameNormalizedAuthPath(dir, cfgDir) {
+			return true
+		}
+	}
+	return false
+}
+
+func (w *Watcher) isWatchedConfigTarget(normalizedName string) bool {
+	if normalizedName == w.normalizeAuthPath(w.configPath) {
+		return true
+	}
+	w.watchMu.Lock()
+	targets := w.watchedConfigTargets
+	w.watchMu.Unlock()
+	for _, target := range targets {
+		if normalizedName == w.normalizeAuthPath(target) {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *Watcher) syncAuthDirWatch() {
 	if w == nil || w.watcher == nil || w.stopped.Load() {
 		return
@@ -70,7 +160,7 @@ func (w *Watcher) syncAuthDirWatch() {
 	if oldWatched == target {
 		return
 	}
-	if oldWatched != "" && !w.sameNormalizedAuthPath(oldWatched, w.configPath) && !w.sameNormalizedAuthPath(oldWatched, target) {
+	if oldWatched != "" && !w.isWatchedConfigDirLocked(oldWatched) && !w.sameNormalizedAuthPath(oldWatched, target) {
 		if errRemove := w.watcher.Remove(oldWatched); errRemove != nil {
 			log.Debugf("failed to remove previous auth directory watch %s: %v", oldWatched, errRemove)
 		}
@@ -115,9 +205,8 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	// Filter only relevant events: config file or auth-dir JSON files.
 	configOps := fsnotify.Write | fsnotify.Create | fsnotify.Rename | fsnotify.Remove
 	normalizedName := w.normalizeAuthPath(event.Name)
-	normalizedConfigPath := w.normalizeAuthPath(w.configPath)
 	normalizedAuthDir := w.normalizeAuthPath(w.currentAuthDir())
-	isConfigEvent := normalizedName == normalizedConfigPath && event.Op&configOps != 0
+	isConfigEvent := w.isWatchedConfigTarget(normalizedName) && event.Op&configOps != 0
 	authOps := fsnotify.Create | fsnotify.Write | fsnotify.Remove | fsnotify.Rename
 	isAuthJSON := filepath.Dir(normalizedName) == normalizedAuthDir && strings.HasSuffix(normalizedName, ".json") && event.Op&authOps != 0
 	if !isConfigEvent && !isAuthJSON {
@@ -131,6 +220,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	// Handle config file changes
 	if isConfigEvent {
 		log.Debugf("config file change details - operation: %s, timestamp: %s", event.Op.String(), now.Format("2006-01-02 15:04:05.000"))
+		w.syncConfigWatch()
 		w.scheduleConfigReload()
 		return
 	}

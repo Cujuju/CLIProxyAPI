@@ -55,7 +55,55 @@ func executeStreamWithFirstByteTimeout(ctx context.Context, limit time.Duration,
 	timer := time.AfterFunc(limit, func() { cancel(errFirstByteDeadline) })
 	timedOut := func() bool { return errors.Is(context.Cause(attemptCtx), errFirstByteDeadline) }
 
-	result, err := start(attemptCtx)
+	type startOutcome struct {
+		result   *cliproxyexecutor.StreamResult
+		err      error
+		panicked bool
+		panicVal any
+	}
+	started := make(chan startOutcome)
+	abandoned := make(chan struct{})
+	go func() {
+		var outcome startOutcome
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					outcome.panicked = true
+					outcome.panicVal = r
+				}
+			}()
+			outcome.result, outcome.err = start(attemptCtx)
+		}()
+		select {
+		case started <- outcome:
+		case <-abandoned:
+			if outcome.result != nil && outcome.result.Chunks != nil {
+				discardStreamChunks(outcome.result.Chunks)
+			}
+			cancel(nil)
+		}
+	}()
+
+	var result *cliproxyexecutor.StreamResult
+	var err error
+	select {
+	case out := <-started:
+		if out.panicked {
+			timer.Stop()
+			cancel(nil)
+			panic(out.panicVal)
+		}
+		result, err = out.result, out.err
+	case <-attemptCtx.Done():
+		timer.Stop()
+		fired := timedOut()
+		close(abandoned)
+		if fired {
+			return nil, newFirstByteTimeoutError(limit)
+		}
+		return nil, ctx.Err()
+	}
+
 	if err != nil || result == nil || result.Chunks == nil {
 		timer.Stop()
 		fired := timedOut()
@@ -67,31 +115,57 @@ func executeStreamWithFirstByteTimeout(ctx context.Context, limit time.Duration,
 	}
 
 	out := make(chan cliproxyexecutor.StreamChunk)
-	go forwardFirstByteGuarded(ctx, result.Chunks, out, timer, timedOut, func() { cancel(nil) }, limit)
+	go forwardFirstByteGuarded(ctx, attemptCtx, result.Chunks, out, timer, timedOut, func() { cancel(nil) }, limit)
 	return &cliproxyexecutor.StreamResult{Headers: result.Headers, Chunks: out}, nil
 }
 
 // forwardFirstByteGuarded relays chunks, replacing the upstream outcome with a timeout error when
 // the deadline fired before the first payload. It stops relaying when the caller's context ends.
-func forwardFirstByteGuarded(ctx context.Context, in <-chan cliproxyexecutor.StreamChunk, out chan<- cliproxyexecutor.StreamChunk, timer *time.Timer, timedOut func() bool, release func(), limit time.Duration) {
+func forwardFirstByteGuarded(ctx, attemptCtx context.Context, in <-chan cliproxyexecutor.StreamChunk, out chan<- cliproxyexecutor.StreamChunk, timer *time.Timer, timedOut func() bool, release func(), limit time.Duration) {
 	defer close(out)
 	defer release()
+	drained := false
+	drainOnce := func() {
+		if !drained {
+			drained = true
+			discardStreamChunks(in)
+		}
+	}
 	send := func(chunk cliproxyexecutor.StreamChunk) bool {
 		select {
 		case out <- chunk:
 			return true
 		case <-ctx.Done():
-			discardStreamChunks(in)
+			drainOnce()
 			return false
 		}
 	}
 	armed := true
-	for chunk := range in {
+	for {
+		var chunk cliproxyexecutor.StreamChunk
+		var ok bool
+		if armed {
+			select {
+			case chunk, ok = <-in:
+			case <-attemptCtx.Done():
+				timer.Stop()
+				drainOnce()
+				if timedOut() {
+					send(cliproxyexecutor.StreamChunk{Err: newFirstByteTimeoutError(limit)})
+				}
+				return
+			}
+		} else {
+			chunk, ok = <-in
+		}
+		if !ok {
+			break
+		}
 		if armed && (chunk.Err != nil || len(chunk.Payload) > 0) {
 			armed = false
 			timer.Stop()
 			if timedOut() {
-				discardStreamChunks(in)
+				drainOnce()
 				send(cliproxyexecutor.StreamChunk{Err: newFirstByteTimeoutError(limit)})
 				return
 			}

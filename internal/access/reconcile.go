@@ -10,6 +10,7 @@ import (
 	configaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -77,6 +78,29 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 	return result, added, updated, removed, nil
 }
 
+// AssembleProviders appends manager's scoped Codex login provider unless an exclusive frontend
+// auth plugin is active.
+func AssembleProviders(manager *sdkaccess.Manager, cfg *config.Config, base []sdkaccess.Provider, exclusive bool) []sdkaccess.Provider {
+	if exclusive {
+		return base
+	}
+	var sdkCfg *sdkconfig.SDKConfig
+	if cfg != nil {
+		sdkCfg = &cfg.SDKConfig
+	}
+	codexProvider := codexlogin.SyncFor(manager, sdkCfg)
+	if codexProvider == nil {
+		return base
+	}
+	filtered := make([]sdkaccess.Provider, 0, len(base)+1)
+	for _, p := range base {
+		if identifierFromProvider(p) != codexlogin.ProviderType {
+			filtered = append(filtered, p)
+		}
+	}
+	return append(filtered, codexProvider)
+}
+
 // ApplyAccessProviders reconciles the configured access providers against the
 // currently registered providers and updates the manager. It logs a concise
 // summary of the detected changes and returns whether any provider changed.
@@ -87,8 +111,12 @@ func ApplyAccessProviders(manager *sdkaccess.Manager, oldCfg, newCfg *config.Con
 
 	existing := manager.Providers()
 	configaccess.Register(&newCfg.SDKConfig)
-	codexlogin.Sync(&newCfg.SDKConfig)
-	providers, added, updated, removed, err := ReconcileProviders(oldCfg, newCfg, existing)
+	if codexlogin.SyncFor(manager, &newCfg.SDKConfig) == nil {
+		codexlogin.Sync(&newCfg.SDKConfig)
+	}
+	base, exclusive := sdkaccess.RegisteredProvidersSnapshot()
+	providers := AssembleProviders(manager, newCfg, base, exclusive)
+	_, added, updated, removed, err := ReconcileProviders(oldCfg, newCfg, existing)
 	if err != nil {
 		log.Errorf("failed to reconcile request auth providers: %v", err)
 		return false, fmt.Errorf("reconciling access providers: %w", err)
