@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MoeForge/moego/regexp"
 )
 
 // QuotaWindow is one credential usage limit, normalized across providers.
@@ -63,6 +64,9 @@ const (
 	// codexUnstartedTolerance absorbs whole-second resets and lookup latency. A window started
 	// less than this before an observation also reads as unstarted.
 	codexUnstartedTolerance = time.Minute
+	// maxQuotaLookupWindows matches maxQuotaSignalHeaders so normalized lookup
+	// snapshots stay bounded in memory, clones, and drift logs.
+	maxQuotaLookupWindows = maxQuotaSignalHeaders
 )
 
 var codexWindowSignal = regexp.MustCompile(`^X-Codex-(?:(.+)-)?(Primary|Secondary)-(Used-Percent|Window-Minutes|Reset-At|Reset-After-Seconds)$`)
@@ -75,15 +79,14 @@ func QuotaWindows(auth *Auth, now time.Time) []QuotaWindow {
 	}
 	var windows []QuotaWindow
 	switch strings.ToLower(strings.TrimSpace(auth.Provider)) {
-	case "claude":
+	case "claude", "codex":
+		lookup := cloneQuotaWindows(auth.Quota.LookupWindows)
+		if len(lookup) == 0 {
+			lookup = signalWindows(auth.Provider, auth.Quota.LookupSignals, auth.Quota.LookedUpAt)
+		}
 		windows = mergeQuotaWindows(
-			claudeQuotaWindows(auth.Quota.Signals), auth.Quota.ObservedAt,
-			claudeQuotaWindows(auth.Quota.LookupSignals), auth.Quota.LookedUpAt,
-		)
-	case "codex":
-		windows = mergeQuotaWindows(
-			codexQuotaWindows(auth.Quota.Signals, auth.Quota.ObservedAt), auth.Quota.ObservedAt,
-			codexQuotaWindows(auth.Quota.LookupSignals, auth.Quota.LookedUpAt), auth.Quota.LookedUpAt,
+			signalWindows(auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt), auth.Quota.ObservedAt,
+			lookup, auth.Quota.LookedUpAt,
 		)
 	case "devin":
 		windows = devinQuotaWindows(auth.Quota.Signals)
@@ -91,6 +94,11 @@ func QuotaWindows(auth *Auth, now time.Time) []QuotaWindow {
 	if len(windows) == 0 && len(auth.Quota.LookupWindows) > 0 {
 		windows = cloneQuotaWindows(auth.Quota.LookupWindows)
 	}
+	sortQuotaWindows(windows)
+	return windows
+}
+
+func sortQuotaWindows(windows []QuotaWindow) {
 	sort.SliceStable(windows, func(i, j int) bool {
 		if windows[i].Scoped != windows[j].Scoped {
 			return !windows[i].Scoped
@@ -100,7 +108,67 @@ func QuotaWindows(auth *Auth, now time.Time) []QuotaWindow {
 		}
 		return windows[i].Key < windows[j].Key
 	})
-	return windows
+}
+
+func isSpentQuotaWindow(window QuotaWindow) bool {
+	return window.Status == QuotaWindowStatusRejected ||
+		(window.UsedPercent != nil && *window.UsedPercent >= fullWindowPercent)
+}
+
+func retainQuotaWindows(windows []QuotaWindow) []QuotaWindow {
+	if windows == nil {
+		return nil
+	}
+	if len(windows) == 0 {
+		return []QuotaWindow{}
+	}
+	ordered := slices.Clone(windows)
+	if len(ordered) > maxQuotaLookupWindows {
+		// Prioritize spent account-wide windows (latest reset, then shortest duration on
+		// tie to match credentialQuotaLimit) before truncating.
+		sort.SliceStable(ordered, func(i, j int) bool {
+			a, b := ordered[i], ordered[j]
+			if a.Scoped != b.Scoped {
+				return !a.Scoped
+			}
+			if !a.Scoped {
+				aSpent, bSpent := isSpentQuotaWindow(a), isSpentQuotaWindow(b)
+				if aSpent != bSpent {
+					return aSpent
+				}
+				if aSpent && !a.ResetsAt.Equal(b.ResetsAt) {
+					return a.ResetsAt.After(b.ResetsAt)
+				}
+			}
+			if a.Duration != b.Duration {
+				return a.Duration < b.Duration
+			}
+			return a.Key < b.Key
+		})
+		// Preserve the longest-duration spent account-wide window for lapsed cooldown fallback.
+		longestSpent := -1
+		for i, w := range ordered {
+			if !w.Scoped && isSpentQuotaWindow(w) &&
+				(longestSpent < 0 || w.Duration > ordered[longestSpent].Duration) {
+				longestSpent = i
+			}
+		}
+		if longestSpent >= maxQuotaLookupWindows {
+			ordered[maxQuotaLookupWindows-1] = ordered[longestSpent]
+		}
+		ordered = ordered[:maxQuotaLookupWindows]
+	}
+	sortQuotaWindows(ordered)
+	// Copy into an exact-capacity slice so oversized inputs cannot pin a large backing array.
+	retained := make([]QuotaWindow, len(ordered))
+	for i, w := range ordered {
+		if w.UsedPercent != nil {
+			percent := *w.UsedPercent
+			w.UsedPercent = &percent
+		}
+		retained[i] = w
+	}
+	return retained
 }
 
 func cloneQuotaWindows(windows []QuotaWindow) []QuotaWindow {
@@ -112,6 +180,16 @@ func cloneQuotaWindows(windows []QuotaWindow) []QuotaWindow {
 		}
 	}
 	return cloned
+}
+
+func signalWindows(provider string, signals map[string]string, at time.Time) []QuotaWindow {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude":
+		return claudeQuotaWindows(signals)
+	case "codex":
+		return codexQuotaWindows(signals, at)
+	}
+	return nil
 }
 
 func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
@@ -130,7 +208,7 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 		token, field := strings.ToLower(rest[:cut]), rest[cut+1:]
 		window := byToken[token]
 		if window == nil {
-			window = claudeWindowForToken(token)
+			window = NewClaudeQuotaWindow(token)
 			byToken[token] = window
 			order = append(order, token)
 		}
@@ -163,7 +241,8 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 	return out
 }
 
-func claudeWindowForToken(token string) *QuotaWindow {
+// NewClaudeQuotaWindow returns the metadata for a Claude unified quota token.
+func NewClaudeQuotaWindow(token string) *QuotaWindow {
 	switch token {
 	// Claude's session window starts with the first message. Weekly windows keep a
 	// fixed schedule: an unused scoped weekly window reports the account's weekly reset.
@@ -192,8 +271,9 @@ func humanizeWindowToken(token string) string {
 
 func codexQuotaWindows(signals map[string]string, observedAt time.Time) []QuotaWindow {
 	type codexWindow struct {
-		QuotaWindow
-		minutes int
+		usedPercent *float64
+		resetsAt    time.Time
+		minutes     int
 	}
 	byKey := map[string]*codexWindow{}
 	order := []string{}
@@ -209,7 +289,7 @@ func codexQuotaWindows(signals map[string]string, observedAt time.Time) []QuotaW
 		}
 		window := byKey[windowKey]
 		if window == nil {
-			window = &codexWindow{QuotaWindow: QuotaWindow{Key: windowKey, Scoped: scope != ""}}
+			window = &codexWindow{}
 			byKey[windowKey] = window
 			order = append(order, windowKey)
 		}
@@ -217,20 +297,19 @@ func codexQuotaWindows(signals map[string]string, observedAt time.Time) []QuotaW
 		switch field {
 		case "Used-Percent":
 			if percent, err := strconv.ParseFloat(value, 64); err == nil {
-				window.UsedPercent = &percent
+				window.usedPercent = &percent
 			}
 		case "Window-Minutes":
 			if minutes, err := strconv.Atoi(value); err == nil && minutes > 0 {
 				window.minutes = minutes
-				window.Duration = time.Duration(minutes) * time.Minute
 			}
 		case "Reset-At":
 			if at, ok := parseQuotaTimestamp(value); ok {
-				window.ResetsAt = at
+				window.resetsAt = at
 			}
 		case "Reset-After-Seconds":
-			if seconds, err := strconv.ParseFloat(value, 64); err == nil && window.ResetsAt.IsZero() && !observedAt.IsZero() {
-				window.ResetsAt = observedAt.Add(time.Duration(seconds * float64(time.Second)))
+			if seconds, err := strconv.ParseFloat(value, 64); err == nil && window.resetsAt.IsZero() && !observedAt.IsZero() {
+				window.resetsAt = observedAt.Add(time.Duration(seconds * float64(time.Second)))
 			}
 		}
 	}
@@ -245,21 +324,32 @@ func codexQuotaWindows(signals map[string]string, observedAt time.Time) []QuotaW
 	out := make([]QuotaWindow, 0, len(order))
 	for _, key := range order {
 		window := byKey[key]
-		if window.UsedPercent == nil && window.ResetsAt.IsZero() {
+		if window.usedPercent == nil && window.resetsAt.IsZero() {
 			continue
 		}
-		window.Label = windowLabelForMinutes(window.minutes, humanizeWindowToken(window.Key))
-		if scope, _, found := strings.Cut(key, ":"); found {
-			name := limitNames[scope]
-			if name == "" {
-				name = scope
-			}
-			window.Label = name + " · " + windowLabelForMinutes(window.minutes, "limit")
-		}
-		markCodexSessionWindow(&window.QuotaWindow, observedAt)
-		out = append(out, window.QuotaWindow)
+		scope, _, _ := strings.Cut(key, ":")
+		out = append(out, NewCodexQuotaWindow(key, limitNames[scope], window.minutes, window.usedPercent, window.resetsAt, observedAt))
 	}
 	return out
+}
+
+// NewCodexQuotaWindow normalizes a Codex slot key (optionally prefixed with scope:).
+func NewCodexQuotaWindow(key, limitName string, minutes int, usedPercent *float64, resetsAt, observedAt time.Time) QuotaWindow {
+	scope, _, scoped := strings.Cut(key, ":")
+	window := QuotaWindow{
+		Key: key, Scoped: scoped, Duration: time.Duration(minutes) * time.Minute,
+		UsedPercent: usedPercent, ResetsAt: resetsAt,
+	}
+	if scoped {
+		if limitName == "" {
+			limitName = scope
+		}
+		window.Label = limitName + " · " + windowLabelForMinutes(minutes, "limit")
+	} else {
+		window.Label = windowLabelForMinutes(minutes, humanizeWindowToken(key))
+	}
+	markCodexSessionWindow(&window, observedAt)
+	return window
 }
 
 // markCodexSessionWindow marks Codex's account-wide 5-hour window as starting on use. Until a

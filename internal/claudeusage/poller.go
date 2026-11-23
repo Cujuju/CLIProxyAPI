@@ -2,13 +2,13 @@ package claudeusage
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/json"
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
@@ -147,9 +147,25 @@ func (p *Poller) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	lookedUpAt := p.now()
 	raw, errFetch := p.fetch(lookupCtx, p.config(), auth)
 	if errFetch == nil {
-		headers, errConvert := HeadersFromUsage(raw)
+		windows, errConvert := WindowsFromUsage(raw)
 		if errConvert == nil {
-			p.manager.ObserveQuotaLookup(auth.ID, headers, lookedUpAt)
+			accept := func(current *coreauth.Auth) (bool, error) {
+				if !strings.EqualFold(strings.TrimSpace(current.Provider), "claude") ||
+					(auth.RegistrationEpoch != 0 && current.RegistrationEpoch != auth.RegistrationEpoch) {
+					return false, coreauth.ErrQuotaLookupCredentialChanged
+				}
+				if lookedUpAt.Before(current.Quota.LookedUpAt) {
+					return false, nil
+				}
+				return true, nil
+			}
+			recorded, errObserve := p.manager.ObserveQuotaLookupWindows(ctx, auth.ID, windows, lookedUpAt, accept)
+			if errObserve != nil {
+				if !recorded {
+					return errObserve
+				}
+				log.Warnf("failed to record Claude quota lookup: %v", errObserve)
+			}
 			p.storeCredits(ctx, auth, parseCredits(raw, lookedUpAt).credits, lookedUpAt)
 			p.setBackoff(auth.ID, time.Time{})
 			return nil

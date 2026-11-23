@@ -64,6 +64,9 @@ func TestPollerRefreshesOnlyStaleEligibleCredentials(t *testing.T) {
 	}
 	stored, _ := f.manager.GetByID("a")
 	windows := coreauth.QuotaWindows(stored, f.now)
+	if len(stored.Quota.LookupSignals) != 0 || len(stored.Quota.LookupWindows) != 2 {
+		t.Fatalf("expected normalized lookup, got %+v", stored.Quota)
+	}
 	if len(windows) != 2 || !windows[1].ResetsAt.Equal(f.now.Add(48*time.Hour)) || !stored.Quota.LookedUpAt.Equal(f.now) {
 		t.Fatalf("snapshot = %+v windows = %+v", stored.Quota, windows)
 	}
@@ -355,5 +358,96 @@ func TestPollerPreservesResponseEndDuringLookup(t *testing.T) {
 	f.poller.RefreshStale(context.Background())
 	if f.calls["a"] != 3 {
 		t.Fatal("reconciled lookup scheduled itself again")
+	}
+}
+
+func TestPollerRefreshRejectsReplacementCredentialAndOlderSnapshot(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	orig, _ := f.manager.GetByID("a")
+	fetch := f.poller.fetch
+	f.poller.fetch = func(ctx context.Context, cfg *config.Config, auth *coreauth.Auth) (json.RawMessage, error) {
+		raw, err := fetch(ctx, cfg, auth)
+		if err != nil {
+			return nil, err
+		}
+		f.manager.Remove(t.Context(), auth.ID)
+		if _, errReg := f.manager.Register(t.Context(), &coreauth.Auth{ID: auth.ID, Provider: "codex", Metadata: map[string]any{"access_token": "x"}}); errReg != nil {
+			t.Fatal(errReg)
+		}
+		return raw, nil
+	}
+	if err := f.poller.Refresh(t.Context(), orig); !errors.Is(err, coreauth.ErrQuotaLookupCredentialChanged) {
+		t.Fatalf("replacement err = %v, want ErrQuotaLookupCredentialChanged", err)
+	}
+	replaced, _ := f.manager.GetByID("a")
+	if len(replaced.Quota.LookupWindows) != 0 {
+		t.Fatalf("claude windows attached to codex credential: %+v", replaced.Quota.LookupWindows)
+	}
+
+	// Older lookup must not overwrite a newer snapshot.
+	f2 := newPollerFixture(t, claudeOAuth("b"))
+	if failures := f2.poller.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("initial failures = %v", failures)
+	}
+	f2.now = f2.now.Add(-time.Minute)
+	f2.poller.fetch = func(_ context.Context, _ *config.Config, _ *coreauth.Auth) (json.RawMessage, error) {
+		return json.RawMessage(`{"five_hour":{"utilization":95}}`), nil
+	}
+	if failures := f2.poller.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("older failures = %v", failures)
+	}
+	after, _ := f2.manager.GetByID("b")
+	if windows := coreauth.QuotaWindows(after, f2.now); len(windows) != 2 || *windows[0].UsedPercent != 10 {
+		t.Fatalf("older lookup overwrote newer snapshot: %+v", windows)
+	}
+}
+
+func TestPollerRefreshCancellationAfterFetchLeavesRetryStateAlone(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	orig, _ := f.manager.GetByID("a")
+	ctx, cancel := context.WithCancel(t.Context())
+	fetch := f.poller.fetch
+	f.poller.fetch = func(fetchCtx context.Context, cfg *config.Config, auth *coreauth.Auth) (json.RawMessage, error) {
+		raw, err := fetch(fetchCtx, cfg, auth)
+		cancel()
+		return raw, err
+	}
+	if err := f.poller.Refresh(ctx, orig); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	after, _ := f.manager.GetByID("a")
+	if !after.Quota.LookedUpAt.IsZero() || len(after.Quota.LookupWindows) != 0 {
+		t.Fatalf("canceled lookup modified quota: %+v", after.Quota)
+	}
+	if f.poller.inBackoff("a") {
+		t.Fatal("canceled lookup put credential into backoff")
+	}
+}
+
+func TestPollerBoundsLargeUsageSnapshot(t *testing.T) {
+	f := newPollerFixture(t, claudeOAuth("a"))
+	doc := map[string]any{
+		"five_hour": map[string]any{"utilization": 15},
+		"seven_day": map[string]any{"utilization": 45},
+	}
+	for i := range 98 {
+		doc[fmt.Sprintf("a_%02d", i)] = map[string]any{"utilization": i % 100}
+	}
+	payload, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.poller.fetch = func(_ context.Context, _ *config.Config, _ *coreauth.Auth) (json.RawMessage, error) {
+		return payload, nil
+	}
+	if failures := f.poller.RefreshAll(t.Context()); len(failures) != 0 {
+		t.Fatalf("failures = %v", failures)
+	}
+	stored, _ := f.manager.GetByID("a")
+	if len(stored.Quota.LookupWindows) != 64 {
+		t.Fatalf("retained %d windows, want 64", len(stored.Quota.LookupWindows))
+	}
+	if stored.Quota.LookupWindows[0].Key != "five_hour" || stored.Quota.LookupWindows[1].Key != "seven_day" {
+		t.Fatalf("account-wide windows not prioritized: %+v", stored.Quota.LookupWindows[:2])
 	}
 }

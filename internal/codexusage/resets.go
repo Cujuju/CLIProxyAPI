@@ -3,16 +3,15 @@ package codexusage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/json"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/resetcredits"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
@@ -38,8 +37,6 @@ const (
 	creditAvailable = "available"
 
 	accountIDHeader = "Chatgpt-Account-Id"
-
-	secondsPerMinute = 60
 )
 
 // usageURL is ChatGPT's account usage document, the one Codex's /status reads.
@@ -95,41 +92,39 @@ type usageWindow struct {
 	ResetAt            int64    `json:"reset_at"`
 }
 
-// quotaHeaders restates the document's windows as the X-Codex-* headers Codex responses carry,
-// so a lookup and live traffic feed the same quota windows.
-func (doc usageDocument) quotaHeaders() http.Header {
-	headers := http.Header{}
-	addRateLimitHeaders(headers, "X-Codex-", doc.RateLimit)
-	addRateLimitHeaders(headers, "X-Codex-Code-Review-", doc.CodeReviewRateLimit)
-	return headers
+func (doc usageDocument) quotaWindows(lookedUpAt time.Time) ([]coreauth.QuotaWindow, bool) {
+	windows := doc.RateLimit.appendQuotaWindows(nil, "", lookedUpAt)
+	windows = doc.CodeReviewRateLimit.appendQuotaWindows(windows, "code-review:", lookedUpAt)
+	if len(windows) > 0 {
+		return windows, true
+	}
+	if doc.RateLimit.hasFlags() || doc.CodeReviewRateLimit.hasFlags() {
+		return []coreauth.QuotaWindow{}, true
+	}
+	return nil, false
 }
 
-func addRateLimitHeaders(headers http.Header, prefix string, limit *rateLimit) {
+func (limit *rateLimit) hasFlags() bool {
+	return limit != nil && (limit.Allowed != nil || limit.LimitReached != nil)
+}
+
+func (limit *rateLimit) appendQuotaWindows(windows []coreauth.QuotaWindow, keyPrefix string, lookedUpAt time.Time) []coreauth.QuotaWindow {
 	if limit == nil {
-		return
+		return windows
 	}
-	if limit.Allowed != nil {
-		headers.Set(prefix+"Allowed", strconv.FormatBool(*limit.Allowed))
-	}
-	if limit.LimitReached != nil {
-		headers.Set(prefix+"Limit-Reached", strconv.FormatBool(*limit.LimitReached))
-	}
-	addWindowHeaders(headers, prefix+"Primary-", limit.PrimaryWindow)
-	addWindowHeaders(headers, prefix+"Secondary-", limit.SecondaryWindow)
+	windows = limit.PrimaryWindow.appendQuotaWindow(windows, keyPrefix+"primary", lookedUpAt)
+	return limit.SecondaryWindow.appendQuotaWindow(windows, keyPrefix+"secondary", lookedUpAt)
 }
 
-// addWindowHeaders skips a window missing its usage, length or reset, as the traffic parser does.
-func addWindowHeaders(headers http.Header, prefix string, window *usageWindow) {
-	minutes := int64(0)
-	if window != nil {
-		minutes = window.LimitWindowSeconds / secondsPerMinute
+func (window *usageWindow) appendQuotaWindow(windows []coreauth.QuotaWindow, key string, lookedUpAt time.Time) []coreauth.QuotaWindow {
+	if window == nil || window.UsedPercent == nil || window.ResetAt <= 0 {
+		return windows
 	}
-	if window == nil || window.UsedPercent == nil || minutes <= 0 || window.ResetAt <= 0 {
-		return
+	minutes := window.LimitWindowSeconds / int64(time.Minute/time.Second)
+	if minutes <= 0 {
+		return windows
 	}
-	headers.Set(prefix+"Used-Percent", strconv.FormatFloat(*window.UsedPercent, 'f', -1, 64))
-	headers.Set(prefix+"Window-Minutes", strconv.FormatInt(minutes, 10))
-	headers.Set(prefix+"Reset-At", strconv.FormatInt(window.ResetAt, 10))
+	return append(windows, coreauth.NewCodexQuotaWindow(key, "", int(minutes), window.UsedPercent, time.Unix(window.ResetAt, 0), lookedUpAt))
 }
 
 // FetchFunc returns the raw document at url for one credential.
@@ -225,7 +220,25 @@ func (t *Tracker) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 		return errFetch
 	}
 	lookedUpAt := t.now()
-	t.manager.ObserveQuotaLookup(auth.ID, doc.quotaHeaders(), lookedUpAt)
+	if windows, ok := doc.quotaWindows(lookedUpAt); ok {
+		accept := func(current *coreauth.Auth) (bool, error) {
+			if !strings.EqualFold(strings.TrimSpace(current.Provider), "codex") ||
+				(auth.RegistrationEpoch != 0 && current.RegistrationEpoch != auth.RegistrationEpoch) {
+				return false, coreauth.ErrQuotaLookupCredentialChanged
+			}
+			if lookedUpAt.Before(current.Quota.LookedUpAt) {
+				return false, nil
+			}
+			return true, nil
+		}
+		recorded, errObserve := t.manager.ObserveQuotaLookupWindows(ctx, auth.ID, windows, lookedUpAt, accept)
+		if errObserve != nil {
+			if !recorded {
+				return errObserve
+			}
+			log.Warnf("failed to record Codex quota lookup: %v", errObserve)
+		}
+	}
 	var credits *resetcredits.Credits
 	if doc.ResetCredits != nil {
 		credits = &resetcredits.Credits{Available: doc.ResetCredits.Available, Applicable: doc.ResetCredits.Applicable, Expiries: t.lookUpExpiries(ctx, auth, doc)}
