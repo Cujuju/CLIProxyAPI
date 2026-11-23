@@ -133,12 +133,13 @@ var (
 type antigravityModelCapabilityHints struct {
 	WebSearchModelIDs map[string]struct{}
 	// Nil means unknown; an empty non-nil set is an authoritative empty catalog.
-	ModelIDs          map[string]struct{}
-	ModelQuotas       map[string]sdkauth.AntigravityModelQuota
-	weeklyModelQuotas map[string]sdkauth.AntigravityModelQuota
-	quotaBuckets      []sdkauth.AntigravityQuotaBucket
-	lookedUpAt        time.Time
-	revision          uint64
+	ModelIDs           map[string]struct{}
+	ModelQuotas        map[string]sdkauth.AntigravityModelQuota
+	weeklyModelQuotas  map[string]sdkauth.AntigravityModelQuota
+	quotaBuckets       []sdkauth.AntigravityQuotaBucket
+	summaryRequestedAt time.Time
+	lookedUpAt         time.Time
+	revision           uint64
 }
 
 type antigravityModelProbeResult struct {
@@ -519,8 +520,9 @@ func finishAntigravityModelProbe(ctx context.Context, cacheKey, flightKey, path 
 
 func probeAntigravity(ctx context.Context, req sdkauth.AntigravityModelProbeRequest, path string) (antigravityModelCapabilityHints, antigravityProbeStatus) {
 	if path == sdkauth.AntigravityQuotaSummaryPath {
+		requestedAt := antigravityNowFunc()
 		buckets, status := sdkauth.FetchAntigravityQuotaSummary(ctx, req)
-		return antigravityModelCapabilityHints{quotaBuckets: buckets}, status
+		return antigravityModelCapabilityHints{quotaBuckets: buckets, summaryRequestedAt: requestedAt}, status
 	}
 	hints, status := sdkauth.FetchAntigravityAvailableModels(ctx, req)
 	return antigravityModelCapabilityHints{

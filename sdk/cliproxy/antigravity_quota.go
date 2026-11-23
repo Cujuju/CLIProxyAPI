@@ -26,7 +26,7 @@ const (
 
 func (h antigravityModelCapabilityHints) quotaWindows() []coreauth.QuotaWindow {
 	if len(h.quotaBuckets) > 0 {
-		return antigravitySummaryWindows(h.quotaBuckets, h.lookedUpAt)
+		return antigravitySummaryWindows(h.quotaBuckets, h.summaryRequestedAt)
 	}
 	windows := AntigravityQuotaWindows(h.ModelQuotas)
 	weekly := AntigravityQuotaWindows(h.weeklyModelQuotas)
