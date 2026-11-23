@@ -493,7 +493,7 @@ func (m *Manager) restoreCooldownRecordLocked(record CooldownStateRecord, now ti
 		}
 		if record.NonQuotaCooldownUntil.After(now) && record.NonQuotaCooldownUntil.After(auth.nonQuotaCooldownUntil) {
 			auth.nonQuotaCooldownUntil = record.NonQuotaCooldownUntil
-		} else if !record.ForceCooldownEvaluated && len(auth.ModelStates) == 0 && record.NonQuotaCooldownUntil.IsZero() &&
+		} else if !record.NonQuotaCooldownEvaluated && len(auth.ModelStates) == 0 && record.NonQuotaCooldownUntil.IsZero() &&
 			record.LastError != nil && !isQuotaCooldownResultError(record.LastError) &&
 			record.NextRetryAfter.After(now) && record.NextRetryAfter.After(auth.nonQuotaCooldownUntil) {
 			auth.nonQuotaCooldownUntil = record.NextRetryAfter
@@ -1431,8 +1431,10 @@ func cooldownStateRecordEqual(a, b CooldownStateRecord) bool {
 		return false
 	}
 	if a.ForceCooldownEvaluated != b.ForceCooldownEvaluated ||
+		a.NonQuotaCooldownEvaluated != b.NonQuotaCooldownEvaluated ||
 		!a.ForceCooldownUntil.Equal(b.ForceCooldownUntil) ||
 		!a.NonQuotaForceCooldownUntil.Equal(b.NonQuotaForceCooldownUntil) ||
+		!a.NonQuotaCooldownUntil.Equal(b.NonQuotaCooldownUntil) ||
 		!a.CredQuotaForceCooldownUntil.Equal(b.CredQuotaForceCooldownUntil) ||
 		!a.IndependentForceCooldownUntil.Equal(b.IndependentForceCooldownUntil) ||
 		!a.CredentialRetryAfter.Equal(b.CredentialRetryAfter) {
@@ -1527,6 +1529,7 @@ func authCooldownStateRecord(auth *Auth, now time.Time) (CooldownStateRecord, bo
 		ForceCooldownEvaluated:      true,
 		CredentialRetryAfter:        credentialRetryAfter,
 		NonQuotaCooldownUntil:       nonQuotaUntil,
+		NonQuotaCooldownEvaluated:   true,
 	}, true
 }
 

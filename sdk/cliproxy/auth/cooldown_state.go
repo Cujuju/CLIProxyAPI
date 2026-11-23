@@ -68,6 +68,9 @@ type CooldownStateRecord struct {
 	// NonQuotaCooldownUntil persists the deadline of any active non-quota
 	// cooldown layer even after a subsequent 429 overwrites LastError.
 	NonQuotaCooldownUntil time.Time `json:"non_quota_cooldown_until,omitempty"`
+	// NonQuotaCooldownEvaluated marks auth records whose NonQuotaCooldownUntil was
+	// explicitly evaluated so a zero deadline is not treated as legacy unknown.
+	NonQuotaCooldownEvaluated bool `json:"non_quota_cooldown_evaluated,omitempty"`
 	// IndependentNonQuotaCooldownUntil persists NonQuotaCooldownUntil for
 	// IndependentState beneath a credential_quota wrap.
 	IndependentNonQuotaCooldownUntil time.Time `json:"independent_non_quota_cooldown_until,omitempty"`

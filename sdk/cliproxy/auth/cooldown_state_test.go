@@ -55,41 +55,61 @@ func TestLookupRestoresShorterAuthForceCooldownAfterRestart(t *testing.T) {
 }
 
 func TestLookupLiftsQuotaAfterRestartWhenShortNonQuotaExpired(t *testing.T) {
-	withQuotaCooldownEnabled(t)
-	const id = "lookup-expired-503-restart"
-	now := time.Now()
-	quotaUntil := now.Add(time.Hour)
-	expired503 := now.Add(-time.Minute)
-	store := &recordingCooldownStateStore{
-		load: []CooldownStateRecord{{
-			AuthID:                 id,
-			Provider:               "antigravity",
-			Status:                 string(StatusError),
-			NextRetryAfter:         quotaUntil,
-			Quota:                  QuotaState{Exceeded: true, Reason: credentialQuotaReason, NextRecoverAt: quotaUntil},
-			LastError:              &Error{HTTPStatus: http.StatusServiceUnavailable, Message: "service unavailable"},
-			UpdatedAt:              now.Add(-2 * time.Minute),
-			ForceCooldownEvaluated: true,
-			NonQuotaCooldownUntil:  expired503,
-		}},
-	}
-	manager := NewManager(nil, nil, nil)
-	manager.SetCooldownStateStore(store)
-	if _, err := manager.Register(t.Context(), &Auth{ID: id, Provider: "antigravity", Status: StatusActive}); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.RestoreCooldownStates(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	before, _ := manager.GetByID(id)
-	if !before.Quota.Exceeded || before.LastError == nil || before.LastError.HTTPStatus != http.StatusServiceUnavailable ||
-		!before.nonQuotaCooldownUntil.IsZero() {
-		t.Fatalf("unexpected restored state: %+v", before)
-	}
-	after := observeAvailableQuota(t, manager, before, "windows")
-	if after.Quota.Exceeded || after.Unavailable || !after.NextRetryAfter.IsZero() ||
-		after.Status != StatusActive || after.LastError != nil {
-		t.Fatalf("expired 503 kept credential blocked after quota lookup: %+v", after)
+	for _, tc := range []struct {
+		name          string
+		evaluated     bool
+		nonQuotaUntil time.Duration
+		wantBlocked   bool
+	}{
+		{"expired non-quota timestamp", true, -time.Minute, false},
+		{"evaluated zero after expired save", true, 0, false},
+		{"legacy ForceCooldownEvaluated record preserves active 503", false, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withQuotaCooldownEnabled(t)
+			const id = "lookup-expired-503-restart"
+			now := time.Now()
+			quotaUntil := now.Add(time.Hour)
+			var nonQuotaUntil time.Time
+			if tc.nonQuotaUntil != 0 {
+				nonQuotaUntil = now.Add(tc.nonQuotaUntil)
+			}
+			store := &recordingCooldownStateStore{
+				load: []CooldownStateRecord{{
+					AuthID:                    id,
+					Provider:                  "antigravity",
+					Status:                    string(StatusError),
+					NextRetryAfter:            quotaUntil,
+					Quota:                     QuotaState{Exceeded: true, Reason: credentialQuotaReason, NextRecoverAt: quotaUntil},
+					LastError:                 &Error{HTTPStatus: http.StatusServiceUnavailable, Message: "service unavailable"},
+					UpdatedAt:                 now.Add(-2 * time.Minute),
+					ForceCooldownEvaluated:    true,
+					NonQuotaCooldownUntil:     nonQuotaUntil,
+					NonQuotaCooldownEvaluated: tc.evaluated,
+				}},
+			}
+			manager := NewManager(nil, nil, nil)
+			manager.SetCooldownStateStore(store)
+			if _, err := manager.Register(t.Context(), &Auth{ID: id, Provider: "antigravity", Status: StatusActive}); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RestoreCooldownStates(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := manager.GetByID(id)
+			after := observeAvailableQuota(t, manager, before, "windows")
+			if tc.wantBlocked {
+				if after.Quota.Exceeded || !after.Unavailable || !after.NextRetryAfter.Equal(quotaUntil) ||
+					after.LastError == nil || after.LastError.HTTPStatus != http.StatusServiceUnavailable {
+					t.Fatalf("legacy ForceCooldownEvaluated 503 was cleared by quota lookup: %+v", after)
+				}
+				return
+			}
+			if after.Quota.Exceeded || after.Unavailable || !after.NextRetryAfter.IsZero() ||
+				after.Status != StatusActive || after.LastError != nil {
+				t.Fatalf("expired 503 kept credential blocked after quota lookup: %+v", after)
+			}
+		})
 	}
 }
 
