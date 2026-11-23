@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -127,16 +128,51 @@ func (h *Handler) usageLookupsSnapshot() (*coreauth.Manager, []UsageLookup) {
 	return manager, lookups
 }
 
-func firstEligibleUsageLookup(lookups []UsageLookup, auth *coreauth.Auth) UsageLookup {
+const noEligibleUsageLookup = -1
+
+func firstEligibleUsageLookupIndex(lookups []UsageLookup, auth *coreauth.Auth) int {
 	if auth.AuthKind() == coreauth.AuthKindAPIKey {
-		return nil
+		return noEligibleUsageLookup
 	}
-	for _, lookup := range lookups {
+	for i, lookup := range lookups {
 		if lookup.Eligible(auth) {
-			return lookup
+			return i
 		}
 	}
-	return nil
+	return noEligibleUsageLookup
+}
+
+func refreshAllUsageLookups(ctx context.Context, manager *coreauth.Manager, lookups []UsageLookup) map[string]string {
+	auths := manager.List()
+	ownerByID := make(map[string]int, len(auths))
+	for _, auth := range auths {
+		ownerByID[auth.ID] = firstEligibleUsageLookupIndex(lookups, auth)
+	}
+
+	results := make([]map[string]error, len(lookups))
+	var wg sync.WaitGroup
+	for i, lookup := range lookups {
+		wg.Go(func() {
+			results[i] = lookup.RefreshAll(ctx)
+		})
+	}
+	wg.Wait()
+
+	failures := map[string]string{}
+	for i, result := range results {
+		for id, errRefresh := range result {
+			if errRefresh == nil {
+				continue
+			}
+			if owner, known := ownerByID[id]; known && owner != i {
+				continue
+			}
+			if _, exists := failures[id]; !exists {
+				failures[id] = errRefresh.Error()
+			}
+		}
+	}
+	return failures
 }
 
 // GetUsageWindows lists every credential with its normalized usage windows and
@@ -182,8 +218,8 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 			return
 		}
-		lookup := firstEligibleUsageLookup(lookups, auth)
-		if lookup == nil {
+		lookupIndex := firstEligibleUsageLookupIndex(lookups, auth)
+		if lookupIndex == noEligibleUsageLookup {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "credential is not eligible for usage lookup"})
 			return
 		}
@@ -197,7 +233,7 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 			}
 		}
 		if auth != nil {
-			if errRefresh := lookup.Refresh(ctx, auth); errRefresh != nil {
+			if errRefresh := lookups[lookupIndex].Refresh(ctx, auth); errRefresh != nil {
 				failures[auth.ID] = errRefresh.Error()
 			}
 		}
@@ -207,26 +243,16 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 			if ctx.Err() != nil {
 				break
 			}
-			if firstEligibleUsageLookup(lookups, auth) == nil || !accessTokenExpired(auth, now) {
+			if firstEligibleUsageLookupIndex(lookups, auth) == noEligibleUsageLookup || !accessTokenExpired(auth, now) {
 				continue
 			}
 			if _, errRenew := manager.ForceRefreshAuth(ctx, auth.ID); errRenew != nil {
 				renewFailures[auth.ID] = errRenew.Error()
 			}
 		}
-		for _, lookup := range lookups {
-			for id, errRefresh := range lookup.RefreshAll(ctx) {
-				if renewErr, failed := renewFailures[id]; failed {
-					failures[id] = renewErr
-					continue
-				}
-				failures[id] = errRefresh.Error()
-			}
-		}
+		failures = refreshAllUsageLookups(ctx, manager, lookups)
 		for id, renewErr := range renewFailures {
-			if _, recorded := failures[id]; !recorded {
-				failures[id] = renewErr
-			}
+			failures[id] = renewErr
 		}
 	}
 	payload := h.usageWindowsPayloadForManager(time.Now(), manager, lookups)
@@ -318,7 +344,7 @@ func (h *Handler) usageWindowsPayloadForManager(now time.Time, manager *coreauth
 				credential[key] = value
 			}
 		}
-		credential["can_refresh"] = firstEligibleUsageLookup(lookups, auth) != nil
+		credential["can_refresh"] = firstEligibleUsageLookupIndex(lookups, auth) != noEligibleUsageLookup
 		if apiKey, ok := entry["api_key"]; ok {
 			credential["api_key"] = apiKey
 		}

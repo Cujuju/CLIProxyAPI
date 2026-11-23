@@ -3,11 +3,13 @@ package management
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/MoeForge/moego/json"
@@ -197,8 +199,9 @@ func TestRefreshUsageWindowsValidation(t *testing.T) {
 }
 
 type desktopTestUsageLookup struct {
-	singleID string
-	failures map[string]error
+	singleID         string
+	failures         map[string]error
+	beforeRefreshAll func()
 }
 
 func (lookup *desktopTestUsageLookup) Eligible(auth *coreauth.Auth) bool {
@@ -211,7 +214,61 @@ func (lookup *desktopTestUsageLookup) Refresh(_ context.Context, auth *coreauth.
 }
 
 func (lookup *desktopTestUsageLookup) RefreshAll(context.Context) map[string]error {
+	if lookup.beforeRefreshAll != nil {
+		lookup.beforeRefreshAll()
+	}
 	return lookup.failures
+}
+
+func TestDesktopUsageRefreshAllRunsLookupsConcurrently(t *testing.T) {
+	h := newDesktopUsageHandler(t, "")
+	synctest.Test(t, func(t *testing.T) {
+		const lookupCount = 2
+		started := make(chan struct{}, lookupCount)
+		release := make(chan struct{})
+		for range lookupCount {
+			h.RegisterUsageLookup(&desktopTestUsageLookup{beforeRefreshAll: func() {
+				started <- struct{}{}
+				<-release
+			}}, h.authManager)
+		}
+
+		done := make(chan *httptest.ResponseRecorder)
+		go func() {
+			done <- serveDesktop(t, h.RefreshUsageWindows, http.MethodPost, "", "127.0.0.1:1")
+		}()
+		synctest.Wait()
+		if got := len(started); got != lookupCount {
+			t.Errorf("lookups in flight = %d, want %d", got, lookupCount)
+		}
+		close(release)
+		decodeDesktopUsage(t, <-done)
+	})
+}
+
+func TestDesktopUsageRefreshAllMergesErrors(t *testing.T) {
+	const firstMessage = "first lookup failed"
+	for _, tc := range []struct {
+		name     string
+		id       string
+		firstErr error
+		want     map[string]string
+	}{
+		{"owner error wins", "codex-a", errors.New(firstMessage), map[string]string{"codex-a": firstMessage}},
+		{"owner success suppresses secondary error", "codex-a", nil, nil},
+		{"first error wins for unknown ID", "unknown", errors.New(firstMessage), map[string]string{"unknown": firstMessage}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newDesktopUsageHandler(t, "")
+			h.RegisterUsageLookup(&desktopTestUsageLookup{failures: map[string]error{tc.id: tc.firstErr}}, h.authManager)
+			h.RegisterUsageLookup(&desktopTestUsageLookup{failures: map[string]error{tc.id: errors.New("second lookup failed")}}, h.authManager)
+
+			payload := decodeDesktopUsage(t, serveDesktop(t, h.RefreshUsageWindows, http.MethodPost, "", "127.0.0.1:1"))
+			if !maps.Equal(payload.Errors, tc.want) {
+				t.Fatalf("refresh-all errors = %v, want %v", payload.Errors, tc.want)
+			}
+		})
+	}
 }
 
 func TestDesktopUsageRegisteredLookups(t *testing.T) {
