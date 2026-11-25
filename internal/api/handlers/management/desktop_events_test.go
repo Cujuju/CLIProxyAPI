@@ -10,7 +10,7 @@ import (
 func TestDesktopEventBillingFields(t *testing.T) {
 	for _, tc := range []struct{ upstream, want string }{
 		{"default", "standard"}, {"standard", "standard"}, {"fast", "fast"},
-		{"priority", "fast"}, {"flex", "flex"}, {"", ""}, {"auto", ""}, {"unknown", ""},
+		{"priority", "fast"}, {"flex", "flex"}, {"ultrafast", "ultrafast"}, {"", ""}, {"auto", ""}, {"unknown", ""},
 	} {
 		for _, reported := range []bool{false, true} {
 			for _, tokens := range []int64{0, 7} {

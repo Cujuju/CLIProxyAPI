@@ -140,6 +140,8 @@ func desktopEventFromRecord(record coreusage.Record) desktopRequestEvent {
 		event.Tier = "fast"
 	case "flex":
 		event.Tier = "flex"
+	case "ultrafast":
+		event.Tier = "ultrafast"
 	}
 	if record.Fail.StatusCode != 0 {
 		event.StatusCode = record.Fail.StatusCode
