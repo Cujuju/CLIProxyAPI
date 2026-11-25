@@ -321,8 +321,8 @@ upstream attempt, successful or failed:
   when upstream did not report the split; neither is added to the total.
 - `tier`: optional billed response tier, never inferred from the request.
   Claude `usage.speed` supplies `standard` or `fast`. OpenAI/Codex response
-  `service_tier` maps `default` to `standard`, `priority`/`fast` to `fast`, and
-  `flex` to `flex`. Unknown or absent values are omitted. OpenAI renamed Priority
+  `service_tier` maps `default` to `standard`, `priority`/`fast` to `fast`,
+  `flex` to `flex`, and `ultrafast` to `ultrafast`. Unknown or absent values are omitted. OpenAI renamed Priority
   processing to Fast mode; `priority` and `fast` select the same service.
   Sources: [OpenAI cache usage](https://developers.openai.com/api/docs/guides/prompt-caching#usage),
   [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode),
