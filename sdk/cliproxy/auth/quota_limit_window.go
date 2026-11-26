@@ -28,6 +28,9 @@ type QuotaWindow struct {
 	// Status is the upstream window status ("allowed", "allowed_warning",
 	// "rejected"); empty when unknown.
 	Status string
+	// DisabledReason is the provider's raw reason the window is unavailable, e.g.
+	// Claude's overage "org_level_disabled" or "org_spend_cap_reached"; empty when none.
+	DisabledReason string
 	// Scoped marks model-, feature- or spend-specific windows. Only unscoped
 	// windows describe the whole account and drive routing.
 	Scoped bool
@@ -68,6 +71,21 @@ const (
 	// snapshots stay bounded in memory, clones, and drift logs.
 	maxQuotaLookupWindows = maxQuotaSignalHeaders
 )
+
+// Claude unified window fields, as in Anthropic-Ratelimit-Unified-<token>-<field>. Fields can
+// contain "-", so a header is split by these known suffixes rather than at its last "-".
+const (
+	claudeFieldUtilization    = "Utilization"
+	claudeFieldReset          = "Reset"
+	claudeFieldStatus         = "Status"
+	claudeFieldLabel          = "Label"
+	claudeFieldDisabledReason = "Disabled-Reason"
+)
+
+// claudeWindowFields lists multi-segment fields first so the longest suffix wins.
+var claudeWindowFields = []string{
+	claudeFieldDisabledReason, claudeFieldUtilization, claudeFieldReset, claudeFieldStatus, claudeFieldLabel,
+}
 
 var codexWindowSignal = regexp.MustCompile(`^X-Codex-(?:(.+)-)?(Primary|Secondary)-(Used-Percent|Window-Minutes|Reset-At|Reset-After-Seconds)$`)
 
@@ -200,12 +218,10 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 		if !strings.HasPrefix(canonical, claudeUnifiedSignalPrefix) {
 			continue
 		}
-		rest := canonical[len(claudeUnifiedSignalPrefix):]
-		cut := strings.LastIndex(rest, "-")
-		if cut <= 0 {
+		token, field, ok := splitClaudeWindowSignal(canonical[len(claudeUnifiedSignalPrefix):])
+		if !ok {
 			continue
 		}
-		token, field := strings.ToLower(rest[:cut]), rest[cut+1:]
 		window := byToken[token]
 		if window == nil {
 			window = NewClaudeQuotaWindow(token)
@@ -213,21 +229,24 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 			order = append(order, token)
 		}
 		switch field {
-		case "Utilization":
+		case claudeFieldUtilization:
 			if fraction, ok := new(big.Rat).SetString(strings.TrimSpace(value)); ok {
 				// Keep the upstream decimal exact until the final float64 rounding.
 				percent, _ := fraction.Mul(fraction, big.NewRat(claudePercentPerFraction, 1)).Float64()
 				window.UsedPercent = &percent
 			}
-		case "Reset":
+		case claudeFieldReset:
 			if at, ok := parseQuotaTimestamp(value); ok {
 				window.ResetsAt = at
 			}
-		case "Status":
+		case claudeFieldStatus:
 			window.Status = strings.ToLower(strings.TrimSpace(value))
-		case "Label":
+		case claudeFieldLabel:
 			// Usage lookups name codename windows; upstream headers never send this field.
 			window.Label = strings.TrimSpace(value)
+		case claudeFieldDisabledReason:
+			// Raw passthrough: Anthropic's set of reasons is undocumented and open-ended.
+			window.DisabledReason = strings.TrimSpace(value)
 		}
 	}
 	out := make([]QuotaWindow, 0, len(order))
@@ -239,6 +258,17 @@ func claudeQuotaWindows(signals map[string]string) []QuotaWindow {
 		out = append(out, *window)
 	}
 	return out
+}
+
+// splitClaudeWindowSignal splits "<token>-<field>" for a known field. Account-level
+// headers ("Status", "Representative-Claim") and unknown fields report false.
+func splitClaudeWindowSignal(rest string) (token, field string, ok bool) {
+	for _, field := range claudeWindowFields {
+		if token, found := strings.CutSuffix(rest, "-"+field); found && token != "" {
+			return strings.ToLower(token), field, true
+		}
+	}
+	return "", "", false
 }
 
 // NewClaudeQuotaWindow returns the metadata for a Claude unified quota token.

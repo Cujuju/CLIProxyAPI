@@ -37,6 +37,8 @@ type desktopUsageWindow struct {
 	UsedPercent *float64   `json:"used_percent"`
 	ResetsAt    *time.Time `json:"resets_at"`
 	Status      *string    `json:"status"`
+	// DisabledReason is the provider's raw reason the window is unavailable; null when none.
+	DisabledReason *string `json:"disabled_reason"`
 	// DurationSeconds is the window length; null when the provider does not say.
 	DurationSeconds *int64 `json:"duration_seconds"`
 	// Scoped marks model-, feature- or spend-specific windows; only unscoped ones drive routing.
@@ -452,6 +454,10 @@ func desktopWindows(auth *coreauth.Auth, now time.Time) []desktopUsageWindow {
 		if window.Status != "" {
 			status := window.Status
 			item.Status = &status
+		}
+		if window.DisabledReason != "" {
+			reason := window.DisabledReason
+			item.DisabledReason = &reason
 		}
 		if window.Cadence != coreauth.ResetCadenceUnknown {
 			cadence := string(window.Cadence)

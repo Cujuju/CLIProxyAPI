@@ -125,9 +125,10 @@ The legacy setting name is retained for existing configurations.
       "next_pick": true,
       "can_refresh": true,
       "windows": [
-        {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "duration_seconds": 18000, "scoped": false, "reset_cadence": "on_use"},
-        {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "duration_seconds": 604800, "scoped": false, "reset_cadence": "fixed"},
-        {"key": "seven_day_fable", "label": "Weekly · Fable", "used_percent": 100, "resets_at": "2026-10-30T09:00:00Z", "status": "rejected", "duration_seconds": 604800, "scoped": true, "reset_cadence": "fixed"}
+        {"key": "five_hour", "label": "5-hour", "used_percent": 12, "resets_at": "2026-10-25T18:00:00Z", "status": "allowed", "disabled_reason": null, "duration_seconds": 18000, "scoped": false, "reset_cadence": "on_use"},
+        {"key": "seven_day", "label": "Weekly", "used_percent": 41, "resets_at": "2026-10-29T09:00:00Z", "status": "allowed_warning", "disabled_reason": null, "duration_seconds": 604800, "scoped": false, "reset_cadence": "fixed"},
+        {"key": "seven_day_fable", "label": "Weekly · Fable", "used_percent": 100, "resets_at": "2026-10-30T09:00:00Z", "status": "rejected", "disabled_reason": null, "duration_seconds": 604800, "scoped": true, "reset_cadence": "fixed"},
+        {"key": "overage", "label": "Overage", "used_percent": null, "resets_at": null, "status": "rejected", "disabled_reason": "org_level_disabled", "duration_seconds": null, "scoped": true, "reset_cadence": null}
       ]
     }
   ]
@@ -177,6 +178,13 @@ The legacy setting name is retained for existing configurations.
   with the first request after the reset) or `null` (unknown: Codex, Devin).
   Claude and Antigravity report `on_use` for 5-hour and `fixed` for weekly
   summary windows. Codex reports `on_use` for its account-wide 5-hour window.
+  `disabled_reason`: the provider's raw reason the window is unavailable, else
+  `null`. Claude sends it on its `overage` window, from
+  `Anthropic-Ratelimit-Unified-Overage-Disabled-Reason`. Seen values are
+  `org_level_disabled`, `org_spend_cap_reached`, `out_of_credits` and
+  `member_zero_credit_limit`. The list is open-ended. A status-only
+  `rejected` overage window doesn't say whether extra usage is off or capped;
+  this field does.
   An unstarted `on_use` window has `resets_at: null`. Codex and Antigravity
   can report a reset a full window away before the window starts. Credentials
   without reported windows return `[]`.
