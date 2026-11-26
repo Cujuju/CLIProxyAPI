@@ -564,3 +564,31 @@ func TestRefreshUsageWindowsSurfacesRenewalFailure(t *testing.T) {
 		t.Fatalf("refresh-all failure should preserve renewal error, got errors=%v", payload.Errors)
 	}
 }
+
+func TestDesktopWindowsDisabledReason(t *testing.T) {
+	now := time.Now()
+	signals := claudeUsageSignals(now.Add(72*time.Hour), now.Add(3*time.Hour))
+	signals["anthropic-ratelimit-unified-overage-status"] = "rejected"
+	signals["anthropic-ratelimit-unified-overage-disabled-reason"] = "org_spend_cap_reached"
+	auth := &coreauth.Auth{Provider: "claude", Quota: coreauth.QuotaState{ObservedAt: now, Signals: signals}}
+	body, errMarshal := json.Marshal(desktopWindows(auth, now))
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	var windows []map[string]any
+	if errDecode := json.Unmarshal(body, &windows); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	reasons := map[string]any{}
+	for _, window := range windows {
+		reason, ok := window["disabled_reason"]
+		if !ok {
+			t.Fatalf("window %v has no disabled_reason key", window["key"])
+		}
+		reasons[window["key"].(string)] = reason
+	}
+	want := map[string]any{"five_hour": nil, "seven_day": nil, "overage": "org_spend_cap_reached"}
+	if !maps.Equal(reasons, want) {
+		t.Fatalf("disabled_reason by window = %v, want %v", reasons, want)
+	}
+}

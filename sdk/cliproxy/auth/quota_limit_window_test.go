@@ -61,3 +61,39 @@ func TestClaudeQuotaWindowsExactDecimalPercent(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeQuotaWindowsKeepsOverageDisabledReason(t *testing.T) {
+	windows := claudeQuotaWindows(map[string]string{
+		"Anthropic-Ratelimit-Unified-Overage-Status":          "rejected",
+		"Anthropic-Ratelimit-Unified-Overage-Disabled-Reason": " org_level_disabled ",
+		"Anthropic-Ratelimit-Unified-Representative-Claim":    "five_hour",
+		"Anthropic-Ratelimit-Unified-Fallback-Percentage":     "0.5",
+		"Anthropic-Ratelimit-Unified-Status":                  "allowed",
+	})
+	if len(windows) != 1 {
+		t.Fatalf("windows = %+v, want only overage", windows)
+	}
+	if got := windows[0]; got.Key != "overage" || got.Status != QuotaWindowStatusRejected || got.DisabledReason != "org_level_disabled" {
+		t.Fatalf("overage window = %+v", got)
+	}
+}
+
+func TestSplitClaudeWindowSignal(t *testing.T) {
+	for _, tc := range []struct {
+		rest, token, field string
+		ok                 bool
+	}{
+		{"Overage-Disabled-Reason", "overage", claudeFieldDisabledReason, true},
+		{"7d_oi-Utilization", "7d_oi", claudeFieldUtilization, true},
+		{"5h-Reset", "5h", claudeFieldReset, true},
+		{"Status", "", "", false},
+		{"Disabled-Reason", "", "", false},
+		{"Representative-Claim", "", "", false},
+		{"Fallback-Percentage", "", "", false},
+	} {
+		token, field, ok := splitClaudeWindowSignal(tc.rest)
+		if token != tc.token || field != tc.field || ok != tc.ok {
+			t.Errorf("%s: got (%q, %q, %v), want (%q, %q, %v)", tc.rest, token, field, ok, tc.token, tc.field, tc.ok)
+		}
+	}
+}
