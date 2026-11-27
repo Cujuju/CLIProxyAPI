@@ -209,8 +209,10 @@ login. Antigravity credentials stay listed for quota only. Quota comes from the
 official CLI, `agy -p /usage --output-format json` (`agy` on the proxy's
 PATH), which starts no model turn. The CLI reports only the account it is signed
 into, so exactly one enabled Antigravity OAuth credential must exist; with more,
-every one gets an error and nothing is recorded. The proxy refreshes it every 3
-hours, with backoff after failures, and on each `POST /usage/refresh`.
+every one gets an error and nothing is recorded. The proxy refreshes it every 5
+minutes, with backoff after failures, and on each `POST /usage/refresh`. Runs
+happen off every request path at below-normal CPU priority; a refresh that
+arrives during a run shares its result, and `GET /usage/windows` never waits.
 Turning `direct-api` off stops every new Antigravity call; one already in
 flight when it flips (a login exchanging its code, a probe) still finishes.
 

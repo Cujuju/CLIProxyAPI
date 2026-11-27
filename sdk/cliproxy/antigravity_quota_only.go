@@ -16,7 +16,12 @@ import (
 // API: no executor, no models, no probes. Quota comes from the official CLI,
 // which reports only the account it is signed into.
 
-const antigravityProvider = "antigravity"
+const (
+	antigravityProvider = "antigravity"
+	// antigravityCLIQuotaInterval spaces background CLI runs. A run takes about
+	// 3s, starts no model turn and runs off every request path.
+	antigravityCLIQuotaInterval = 5 * time.Minute
+)
 
 var (
 	errAntigravityCLIQuotaNoCredential = errors.New("antigravity quota-only mode needs one enabled Antigravity OAuth credential")
@@ -31,10 +36,19 @@ var antigravityCLIQuotaFetcher = sdkauth.FetchAntigravityCLIQuota
 var antigravityCLIQuota antigravityCLIQuotaSchedule
 
 type antigravityCLIQuotaSchedule struct {
-	run     sync.Mutex // serializes CLI runs
-	mu      sync.Mutex // guards the fields below
+	run     sync.Mutex                // serializes CLI runs
+	last    antigravityCLIQuotaResult // guarded by run
+	mu      sync.Mutex                // guards the fields below
 	nextRun time.Time
 	failure antigravityFailureState
+}
+
+// antigravityCLIQuotaResult is the outcome of the latest CLI run.
+type antigravityCLIQuotaResult struct {
+	finishedAt time.Time
+	shareable  bool // false when the runner's own context ended the run
+	id         string
+	err        error
 }
 
 func (s *Service) antigravityDirectAPIEnabled() bool {
@@ -78,9 +92,15 @@ func (s *Service) antigravityCLIQuotaCredential() (*coreauth.Auth, error) {
 
 // refreshAntigravityCLIQuota runs the CLI once and records its windows on the
 // single eligible credential. It returns that credential's ID when one was bound.
+// A caller that waited on a run in flight shares its result instead of running
+// the CLI again, so a refresh never waits for two runs.
 func (s *Service) refreshAntigravityCLIQuota(ctx context.Context) (string, error) {
+	calledAt := antigravityNowFunc()
 	antigravityCLIQuota.run.Lock()
 	defer antigravityCLIQuota.run.Unlock()
+	if last := antigravityCLIQuota.last; last.shareable && last.finishedAt.After(calledAt) {
+		return last.id, last.err
+	}
 	auth, err := s.antigravityCLIQuotaCredential()
 	if err != nil {
 		return "", err
@@ -97,18 +117,20 @@ func (s *Service) refreshAntigravityCLIQuota(ctx context.Context) (string, error
 				return !lookedUpAt.Before(current.Quota.LookedUpAt), nil
 			})
 	}
-	antigravityCLIQuota.finish(antigravityNowFunc(), err == nil)
+	finishedAt := antigravityNowFunc()
+	antigravityCLIQuota.last = antigravityCLIQuotaResult{finishedAt: finishedAt, shareable: ctx.Err() == nil, id: auth.ID, err: err}
+	antigravityCLIQuota.finish(finishedAt, err == nil)
 	return auth.ID, err
 }
 
-// finish schedules the next run: the direct summary's cadence after success,
-// the shared transient backoff after failure.
+// finish schedules the next run: the CLI interval after success, the shared
+// transient backoff after failure.
 func (q *antigravityCLIQuotaSchedule) finish(now time.Time, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if ok {
 		q.failure = antigravityFailureState{}
-		q.nextRun = now.Add(antigravityCapabilityCacheTTL)
+		q.nextRun = now.Add(antigravityCLIQuotaInterval)
 		return
 	}
 	q.failure = nextAntigravityFailure(q.failure, now, rand.Int64N)

@@ -36,12 +36,17 @@ func FetchAntigravityCLIQuota(ctx context.Context) ([]AntigravityQuotaBucket, er
 	ctx, cancel := context.WithTimeout(ctx, antigravityCLIQuotaTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, resolved, antigravityCLIQuotaArgs...)
-	hideAntigravityCLIWindow(cmd)
-	out, err := cmd.Output()
-	if err != nil {
+	backgroundAntigravityCLI(cmd)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err = cmd.Start(); err != nil {
 		return nil, fmt.Errorf("antigravity cli usage failed: %w", err)
 	}
-	return ParseAntigravityCLIQuota(out)
+	lowerAntigravityCLIPriority(cmd.Process)
+	if err = cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("antigravity cli usage failed: %w", err)
+	}
+	return ParseAntigravityCLIQuota(out.Bytes())
 }
 
 // ParseAntigravityCLIQuota reads `agy -p /usage --output-format json` output.
