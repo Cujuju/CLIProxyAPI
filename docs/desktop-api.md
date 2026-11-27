@@ -211,6 +211,8 @@ PATH), which starts no model turn. The CLI reports only the account it is signed
 into, so exactly one enabled Antigravity OAuth credential must exist; with more,
 every one gets an error and nothing is recorded. The proxy refreshes it every 3
 hours, with backoff after failures, and on each `POST /usage/refresh`.
+Turning `direct-api` off stops every new Antigravity call; one already in
+flight when it flips (a login exchanging its code, a probe) still finishes.
 
 With `direct-api: true`, Antigravity reads `retrieveUserQuotaSummary`. When the
 summary is empty or unsupported, `fetchAvailableModels` supplies scoped model
