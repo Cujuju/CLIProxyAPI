@@ -224,7 +224,7 @@ func TestAntigravityQuotaOnlyBackgroundSchedule(t *testing.T) {
 	now = retry
 	fail = false
 	svc.refreshAntigravityModels(t.Context())
-	if cliCalls.Load() != 2 || !antigravityCLIQuota.next().Equal(now.Add(antigravityCapabilityCacheTTL)) {
+	if cliCalls.Load() != 2 || !antigravityCLIQuota.next().Equal(now.Add(antigravityCLIQuotaInterval)) {
 		t.Fatalf("after success: cli calls = %d, next at %s", cliCalls.Load(), antigravityCLIQuota.next())
 	}
 }
@@ -238,5 +238,54 @@ func TestAntigravityQuotaOnlyLookupErrorNamesCLI(t *testing.T) {
 	err := svc.NewAntigravityUsageLookup().Refresh(t.Context(), auth)
 	if err == nil || !strings.Contains(err.Error(), "antigravity cli") {
 		t.Fatalf("Refresh error = %v, want the CLI failure", err)
+	}
+}
+
+func TestAntigravityQuotaOnlyRefreshSharesRunInFlight(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var cliCalls atomic.Int32
+	quotaOnlyTestSetup(t, func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error) {
+		if cliCalls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return cliBuckets(), nil
+	})
+	// A strictly advancing clock that signals each read, so the test knows the
+	// second caller has arrived (Windows' clock can repeat within a tick).
+	clockReads := make(chan struct{}, 16)
+	var ticks atomic.Int64
+	start := time.Date(2026, 11, 27, 18, 0, 0, 0, time.UTC)
+	oldClock := antigravityNowFunc
+	antigravityNowFunc = func() time.Time {
+		clockReads <- struct{}{}
+		return start.Add(time.Duration(ticks.Add(1)) * time.Millisecond)
+	}
+	t.Cleanup(func() { antigravityNowFunc = oldClock })
+	svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+	auth, err := svc.coreManager.Register(t.Context(), antigravityTestAuth("in-flight", "https://unused.invalid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	background := make(chan error, 1)
+	go func() { _, errRun := svc.refreshAntigravityCLIQuota(t.Context()); background <- errRun }()
+	<-entered
+	for len(clockReads) > 0 {
+		<-clockReads
+	}
+	manual := make(chan error, 1)
+	go func() { manual <- svc.NewAntigravityUsageLookup().Refresh(t.Context(), auth) }()
+	<-clockReads
+	close(release)
+
+	if errRun := <-background; errRun != nil {
+		t.Fatal(errRun)
+	}
+	if errRun := <-manual; errRun != nil {
+		t.Fatal(errRun)
+	}
+	if cliCalls.Load() != 1 {
+		t.Fatalf("cli runs = %d, want 1: a refresh during a run must share it", cliCalls.Load())
 	}
 }
