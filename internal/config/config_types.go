@@ -275,10 +275,6 @@ type AntigravityConfig struct {
 	// listed but are never routed to, and quota comes from the official CLI.
 	DirectAPI bool `yaml:"direct-api,omitempty" json:"direct-api,omitempty"`
 
-	// CLIPath is the official Antigravity CLI that reports quota in quota-only
-	// mode. Defaults to "agy" on PATH.
-	CLIPath string `yaml:"cli-path,omitempty" json:"cli-path,omitempty"`
-
 	// SensitiveWords is a list of words to obfuscate with invisible combining grapheme joiners in system instructions.
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
 

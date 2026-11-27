@@ -185,6 +185,12 @@ func (l *AntigravityUsageLookup) Eligible(auth *coreauth.Auth) bool {
 	return strings.TrimSpace(accessToken) != ""
 }
 
+// NeedsAccessToken reports whether a lookup uses the credential's access token.
+// Quota-only mode reads the CLI's own login, so it never renews the token.
+func (l *AntigravityUsageLookup) NeedsAccessToken(*coreauth.Auth) bool {
+	return l != nil && l.service != nil && l.service.antigravityDirectAPIEnabled()
+}
+
 // Refresh fetches usage for one credential, bypassing the catalog TTL.
 func (l *AntigravityUsageLookup) Refresh(ctx context.Context, auth *coreauth.Auth) error {
 	if !l.Eligible(auth) {

@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-
 	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -60,13 +58,6 @@ func isAntigravityOAuthCredential(auth *coreauth.Auth) bool {
 		auth.AuthKind() == coreauth.AuthKindOAuth && strings.TrimSpace(auth.Attributes[coreauth.AttributeAPIKey]) == ""
 }
 
-func antigravityCLIPath(cfg *config.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	return cfg.Antigravity.CLIPath
-}
-
 // antigravityCLIQuotaCredential returns the single credential the CLI's quota describes.
 func (s *Service) antigravityCLIQuotaCredential() (*coreauth.Auth, error) {
 	var found *coreauth.Auth
@@ -95,7 +86,7 @@ func (s *Service) refreshAntigravityCLIQuota(ctx context.Context) (string, error
 		return "", err
 	}
 	requestedAt := antigravityNowFunc()
-	buckets, err := antigravityCLIQuotaFetcher(ctx, antigravityCLIPath(s.currentConfig()))
+	buckets, err := antigravityCLIQuotaFetcher(ctx)
 	if err == nil {
 		lookedUpAt := antigravityNowFunc()
 		_, err = s.coreManager.ObserveQuotaLookupWindows(ctx, auth.ID, antigravitySummaryWindows(buckets, requestedAt), lookedUpAt,

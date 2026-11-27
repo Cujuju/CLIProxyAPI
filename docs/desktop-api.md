@@ -206,7 +206,7 @@ Antigravity defaults to quota-only mode (`oauth.providers.antigravity.direct-api
 unset or `false`). The proxy never calls Google's Cloud Code API as the
 Antigravity client: no executor, models, routing, token refresh, probes or
 login. Antigravity credentials stay listed for quota only. Quota comes from the
-official CLI, `agy -p /usage --output-format json` (`cli-path`, default `agy` on
+official CLI, `agy -p /usage --output-format json` (`agy` on the proxy's
 PATH), which starts no model turn. The CLI reports only the account it is signed
 into, so exactly one enabled Antigravity OAuth credential must exist; with more,
 every one gets an error and nothing is recorded. The proxy refreshes it every 3

@@ -26,13 +26,10 @@ const (
 var antigravityCLIQuotaArgs = []string{"-p", "/usage", "--output-format", "json"}
 
 // FetchAntigravityCLIQuota runs the official CLI's /usage command for the
-// account the CLI is signed into. It sends no model request.
-func FetchAntigravityCLIQuota(ctx context.Context, cliPath string) ([]AntigravityQuotaBucket, error) {
-	path := strings.TrimSpace(cliPath)
-	if path == "" {
-		path = AntigravityCLIDefaultPath
-	}
-	resolved, err := exec.LookPath(path)
+// account the CLI is signed into. It sends no model request. The CLI comes only
+// from PATH, so the management config API cannot choose what the proxy runs.
+func FetchAntigravityCLIQuota(ctx context.Context) ([]AntigravityQuotaBucket, error) {
+	resolved, err := exec.LookPath(AntigravityCLIDefaultPath)
 	if err != nil {
 		return nil, fmt.Errorf("antigravity cli not found: %w", err)
 	}

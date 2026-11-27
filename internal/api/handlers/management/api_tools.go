@@ -135,6 +135,11 @@ func (h *Handler) APICall(c *gin.Context) {
 
 	authIndex := firstNonEmptyString(body.AuthIndexSnake, body.AuthIndexCamel, body.AuthIndexPascal)
 	auth := h.authByIndex(authIndex)
+	if auth != nil && strings.EqualFold(strings.TrimSpace(auth.Provider), "antigravity") && !h.configSnapshot().AntigravityDirectAPIEnabled() {
+		// Quota-only mode sends nothing as an Antigravity credential, even with a caller-supplied token.
+		c.JSON(http.StatusConflict, gin.H{"error": config.ErrAntigravityDirectAPIDisabled.Error()})
+		return
+	}
 
 	reqHeaders := body.Header
 	if reqHeaders == nil {

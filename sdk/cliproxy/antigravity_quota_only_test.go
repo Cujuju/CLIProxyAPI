@@ -25,7 +25,7 @@ func antigravityDirectAPI(cfg *config.Config) *config.Config {
 }
 
 // quotaOnlyTestSetup isolates the CLI schedule and replaces the CLI with fetch.
-func quotaOnlyTestSetup(t *testing.T, fetch func(context.Context, string) ([]sdkauth.AntigravityQuotaBucket, error)) {
+func quotaOnlyTestSetup(t *testing.T, fetch func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error)) {
 	t.Helper()
 	resetAntigravityCapabilityCache()
 	oldFetcher := antigravityCLIQuotaFetcher
@@ -65,7 +65,7 @@ func TestAntigravityQuotaOnlyIsTheDefault(t *testing.T) {
 }
 
 func TestAntigravityQuotaOnlyRegistersNoModelsAndNeverProbes(t *testing.T) {
-	quotaOnlyTestSetup(t, func(context.Context, string) ([]sdkauth.AntigravityQuotaBucket, error) {
+	quotaOnlyTestSetup(t, func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error) {
 		return nil, errors.New("not called")
 	})
 	server, hits := googleTrap(t)
@@ -112,21 +112,26 @@ func TestAntigravityQuotaOnlyRetiresExecutor(t *testing.T) {
 	if _, owned := svc.ownedExecutors["antigravity"]; owned {
 		t.Fatal("retired executor still tracked as owned")
 	}
+
+	// A reload whose only Antigravity credential is disabled never reaches the per-auth switch.
+	svc.cfg = antigravityDirectAPI(nil)
+	svc.registerExecutorForAuth(auth, true)
+	svc.cfg = &config.Config{}
+	disabled := &coreauth.Auth{ID: "executor", Provider: "antigravity", Disabled: true}
+	svc.registerAvailableExecutors(t.Context(), executorRegistrationOptions{forceReplaceAuths: true, auths: []*coreauth.Auth{disabled}})
+	if _, ok := svc.coreManager.Executor("antigravity"); ok {
+		t.Fatal("a reload with only disabled credentials kept the Antigravity executor")
+	}
 }
 
 func TestAntigravityQuotaOnlyUsageLookupReadsCLI(t *testing.T) {
 	var cliCalls atomic.Int32
-	quotaOnlyTestSetup(t, func(_ context.Context, path string) ([]sdkauth.AntigravityQuotaBucket, error) {
+	quotaOnlyTestSetup(t, func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error) {
 		cliCalls.Add(1)
-		if path != "C:/tools/agy.exe" {
-			t.Errorf("cli path = %q, want configured path", path)
-		}
 		return cliBuckets(), nil
 	})
 	server, hits := googleTrap(t)
-	cfg := &config.Config{}
-	cfg.Antigravity.CLIPath = "C:/tools/agy.exe"
-	svc := &Service{cfg: cfg, coreManager: coreauth.NewManager(nil, nil, nil)}
+	svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
 	auth := antigravityTestAuth("quota-only-usage", server.URL)
 	// An expired login keeps its refresh token; quota-only mode never refreshes it.
 	delete(auth.Metadata, "access_token")
@@ -138,6 +143,9 @@ func TestAntigravityQuotaOnlyUsageLookupReadsCLI(t *testing.T) {
 	lookup := svc.NewAntigravityUsageLookup()
 	if !lookup.Eligible(auth) {
 		t.Fatal("quota-only mode must not require the credential's access token")
+	}
+	if lookup.NeedsAccessToken(auth) {
+		t.Fatal("quota-only mode must not renew the credential's access token before a lookup")
 	}
 
 	if err := lookup.Refresh(t.Context(), auth); err != nil {
@@ -158,7 +166,7 @@ func TestAntigravityQuotaOnlyUsageLookupReadsCLI(t *testing.T) {
 
 func TestAntigravityQuotaOnlyRefusesAmbiguousAccount(t *testing.T) {
 	var cliCalls atomic.Int32
-	quotaOnlyTestSetup(t, func(context.Context, string) ([]sdkauth.AntigravityQuotaBucket, error) {
+	quotaOnlyTestSetup(t, func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error) {
 		cliCalls.Add(1)
 		return cliBuckets(), nil
 	})
@@ -185,7 +193,7 @@ func TestAntigravityQuotaOnlyBackgroundSchedule(t *testing.T) {
 	t.Cleanup(func() { antigravityNowFunc = oldClock })
 	var cliCalls atomic.Int32
 	fail := true
-	quotaOnlyTestSetup(t, func(context.Context, string) ([]sdkauth.AntigravityQuotaBucket, error) {
+	quotaOnlyTestSetup(t, func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error) {
 		cliCalls.Add(1)
 		if fail {
 			return nil, errors.New("cli failed")
@@ -222,7 +230,7 @@ func TestAntigravityQuotaOnlyBackgroundSchedule(t *testing.T) {
 }
 
 func TestAntigravityQuotaOnlyLookupErrorNamesCLI(t *testing.T) {
-	quotaOnlyTestSetup(t, func(context.Context, string) ([]sdkauth.AntigravityQuotaBucket, error) {
+	quotaOnlyTestSetup(t, func(context.Context) ([]sdkauth.AntigravityQuotaBucket, error) {
 		return nil, errors.New("antigravity cli not found")
 	})
 	svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
