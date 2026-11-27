@@ -615,6 +615,7 @@ func TestRefreshUsageWindowsSkipsRenewalForTokenFreeLookup(t *testing.T) {
 	h.RegisterUsageLookup(lookup, manager)
 
 	for _, body := range []string{`{"auth_index":"idx-cli"}`, ""} {
+		clear(lookup.seenTokens)
 		payload := decodeDesktopUsage(t, serveDesktop(t, h.RefreshUsageWindows, http.MethodPost, body, "127.0.0.1:1"))
 		if len(payload.Errors) != 0 || lookup.seenTokens["cred-cli"] != "stale" || exec.refreshCnt.Load() != 0 {
 			t.Fatalf("body %q: errors=%v seen=%v refreshes=%d; want lookup without renewal", body, payload.Errors, lookup.seenTokens, exec.refreshCnt.Load())
