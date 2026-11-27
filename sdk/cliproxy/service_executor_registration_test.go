@@ -61,7 +61,7 @@ func TestRegisterAvailableExecutors(t *testing.T) {
 	})
 
 	service := &Service{
-		cfg:         &config.Config{},
+		cfg:         antigravityDirectAPI(&config.Config{}),
 		coreManager: coreauth.NewManager(nil, nil, nil),
 		pluginHost:  pluginhost.New(),
 	}

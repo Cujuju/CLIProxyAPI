@@ -200,11 +200,25 @@ Body `{"auth_index": "3f2a9c"}` refreshes one eligible credential. An empty
 body runs all registered lookups. The built-in Claude, Codex and Antigravity lookups
 refresh enabled OAuth credentials, with 2s between requests within each lookup.
 A Codex lookup reads ChatGPT's usage document, so its windows and reset credits
-appear without Codex traffic. Antigravity reads `retrieveUserQuotaSummary`.
-The primary Gemini buckets are account-wide and use the labels `5-hour`
-(18,000 seconds) and `Weekly` (604,800 seconds). Other buckets are scoped.
-When the summary is empty or unsupported, `fetchAvailableModels` supplies
-scoped model quotas, including weekly quotas when available.
+appear without Codex traffic.
+
+Antigravity defaults to quota-only mode (`oauth.providers.antigravity.direct-api`
+unset or `false`). The proxy never calls Google's Cloud Code API as the
+Antigravity client: no executor, models, routing, token refresh, probes or
+login. Antigravity credentials stay listed for quota only. Quota comes from the
+official CLI, `agy -p /usage --output-format json` (`cli-path`, default `agy` on
+PATH), which starts no model turn. The CLI reports only the account it is signed
+into, so exactly one enabled Antigravity OAuth credential must exist; with more,
+every one gets an error and nothing is recorded. The proxy refreshes it every 3
+hours, with backoff after failures, and on each `POST /usage/refresh`.
+
+With `direct-api: true`, Antigravity reads `retrieveUserQuotaSummary`. When the
+summary is empty or unsupported, `fetchAvailableModels` supplies scoped model
+quotas, including weekly quotas when available.
+
+In both modes the primary Gemini buckets are account-wide and use the labels
+`5-hour` (18,000 seconds) and `Weekly` (604,800 seconds). Other buckets are
+scoped.
 
 Returns the `GET /usage/windows` shape, plus
 `"errors": {"<id>": "<message>"}` for failed lookups.

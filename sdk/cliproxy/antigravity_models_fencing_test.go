@@ -30,7 +30,7 @@ func TestAntigravityProbeFencesOlderTokenResult(t *testing.T) {
 		_, _ = w.Write([]byte(`{"models":{"new":{}}}`))
 	}))
 	t.Cleanup(func() { unblock(); server.Close() })
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("fenced", server.URL)
 	auth.Metadata["access_token"] = "old"
 	done := make(chan struct{})
@@ -68,7 +68,7 @@ func TestAntigravityNonAuthoritativeResponsePreservesSuccess(t *testing.T) {
 				_, _ = w.Write([]byte(response))
 			}))
 			defer server.Close()
-			svc := &Service{cfg: &config.Config{}}
+			svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 			auth := antigravityTestAuth("non-authoritative", server.URL)
 			svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
 			key := svc.antigravityCapabilityKey(auth)
@@ -116,7 +116,7 @@ func TestAntigravitySingleflightFollowerCancellation(t *testing.T) {
 		_, _ = w.Write([]byte(`{"models":{}}`))
 	}))
 	t.Cleanup(func() { unblock(); server.Close() })
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("follower", server.URL)
 	leaderDone := make(chan struct{})
 	go func() { defer close(leaderDone); svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth) }()

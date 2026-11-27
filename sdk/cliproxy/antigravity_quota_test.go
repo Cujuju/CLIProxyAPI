@@ -157,7 +157,7 @@ func TestAntigravityQuotaLookupPublicationOrder(t *testing.T) {
 }
 
 func TestAntigravityUsageLookupRequiresAccessToken(t *testing.T) {
-	lookup := (&Service{}).NewAntigravityUsageLookup()
+	lookup := (&Service{cfg: antigravityDirectAPI(nil)}).NewAntigravityUsageLookup()
 	auth := &coreauth.Auth{Provider: "antigravity", Metadata: map[string]any{"email": "oauth@example.com"}}
 	if lookup.Eligible(auth) {
 		t.Error("OAuth credential without an access token is eligible")
@@ -209,7 +209,7 @@ func TestAntigravityUsageLookup(t *testing.T) {
 			}))
 			defer server.Close()
 			manager := coreauth.NewManager(nil, nil, nil)
-			svc := &Service{coreManager: manager}
+			svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 			auth, err := manager.Register(t.Context(), antigravityTestAuth("usage", server.URL))
 			if err != nil {
 				t.Fatal(err)
@@ -270,7 +270,7 @@ func TestAntigravityUsageLookupSharesProbeTimestamp(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 	auth, err := manager.Register(t.Context(), antigravityTestAuth("usage-shared-timestamp", server.URL))
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +324,7 @@ func TestAntigravityUsageLookupKeepsSnapshotWithoutQuota(t *testing.T) {
 	defer server.Close()
 
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 	auth, err := manager.Register(t.Context(), antigravityTestAuth("usage-no-quota", server.URL))
 	if err != nil {
 		t.Fatal(err)

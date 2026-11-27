@@ -681,7 +681,7 @@ func TestStartOAuthV8AntigravityAndPluginSessionProxyAndRestartPersistence(t *te
 		},
 	})
 
-	cfg := &config.Config{AuthDir: authDir, Port: 8317}
+	cfg := antigravityDirectAPI(&config.Config{AuthDir: authDir, Port: 8317})
 	h := NewHandlerWithoutConfigFilePath(cfg, nil)
 	h.SetPluginHost(host)
 
@@ -869,7 +869,7 @@ func TestStartOAuthV8AntigravityProjectDiscoveryProxyFailureFailsSession(t *test
 	}()
 
 	authDir := t.TempDir()
-	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	h := NewHandlerWithoutConfigFilePath(antigravityDirectAPI(&config.Config{AuthDir: authDir}), nil)
 	router := gin.New()
 	router.POST("/v8/management/oauth/auth-url", h.StartOAuthV8)
 	router.GET("/status", h.GetAuthStatus)

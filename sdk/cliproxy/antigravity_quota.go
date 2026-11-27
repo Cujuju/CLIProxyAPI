@@ -172,11 +172,14 @@ func (s *Service) NewAntigravityUsageLookup() *AntigravityUsageLookup {
 	return &AntigravityUsageLookup{service: s}
 }
 
-// Eligible reports whether auth is an enabled Antigravity OAuth credential with an access token.
+// Eligible reports whether auth is an enabled Antigravity OAuth credential.
+// Direct mode also needs its access token; quota-only mode reads the CLI's own login.
 func (l *AntigravityUsageLookup) Eligible(auth *coreauth.Auth) bool {
-	if l == nil || l.service == nil || l.service.antigravityHomeEnabled() || auth == nil || isAntigravityAuthDisabled(auth) || !strings.EqualFold(strings.TrimSpace(auth.Provider), "antigravity") ||
-		auth.AuthKind() != coreauth.AuthKindOAuth || strings.TrimSpace(auth.Attributes[coreauth.AttributeAPIKey]) != "" {
+	if l == nil || l.service == nil || l.service.antigravityHomeEnabled() || !isAntigravityOAuthCredential(auth) {
 		return false
+	}
+	if !l.service.antigravityDirectAPIEnabled() {
+		return true
 	}
 	accessToken, _ := auth.Metadata["access_token"].(string)
 	return strings.TrimSpace(accessToken) != ""
@@ -189,6 +192,13 @@ func (l *AntigravityUsageLookup) Refresh(ctx context.Context, auth *coreauth.Aut
 	}
 	if l.service.coreManager == nil {
 		return errors.New("antigravity usage lookup requires a credential manager")
+	}
+	if !l.service.antigravityDirectAPIEnabled() {
+		id, err := l.service.refreshAntigravityCLIQuota(ctx)
+		if err == nil && id != auth.ID {
+			return errAntigravityCLIQuotaAmbiguous
+		}
+		return err
 	}
 	key, hints, err := l.service.fetchAntigravityModelHints(ctx, auth, true)
 	if err != nil {
@@ -272,8 +282,11 @@ func (s *Service) markAntigravitySummaryFulfilled(key string, revision uint64) {
 // RefreshAll fetches usage for every eligible credential and returns failures by ID.
 func (l *AntigravityUsageLookup) RefreshAll(ctx context.Context) map[string]error {
 	failures := map[string]error{}
-	if l == nil || l.service == nil || l.service.coreManager == nil {
+	if l == nil || l.service == nil || l.service.coreManager == nil || l.service.antigravityHomeEnabled() {
 		return failures
+	}
+	if !l.service.antigravityDirectAPIEnabled() {
+		return l.service.refreshAllAntigravityCLIQuota(ctx)
 	}
 	first := true
 	for _, auth := range l.service.coreManager.List() {

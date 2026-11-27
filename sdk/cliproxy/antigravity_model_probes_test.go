@@ -25,7 +25,7 @@ func TestAntigravityAccountChangesCancelConnectedProbe(t *testing.T) {
 				close(cancelled)
 			}))
 			ctx, cancel := context.WithCancel(t.Context())
-			svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+			svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 			t.Cleanup(func() { cancel(); svc.WaitAntigravityProbes(); server.Close() })
 			auth, _ := svc.coreManager.Register(ctx, antigravityTestAuth("cancel-"+change, server.URL))
 			t.Cleanup(func() { GlobalModelRegistry().UnregisterClient(auth.ID) })
@@ -41,7 +41,7 @@ func TestAntigravityAccountChangesCancelConnectedProbe(t *testing.T) {
 				updated.Metadata["access_token"] = "new-token"
 			}
 			if change == "config-proxy" {
-				next := &config.Config{}
+				next := antigravityDirectAPI(&config.Config{})
 				next.ProxyURL = "direct"
 				svc.commitConfigUpdate(next)
 			} else {

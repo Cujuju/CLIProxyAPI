@@ -282,7 +282,7 @@ func TestRequestCodexTokenLoginDoesNotRaceConfigV8Save(t *testing.T) {
 
 	authDir := t.TempDir()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if errWrite := os.WriteFile(path, []byte("auth-dir: "+authDir+"\nrequest-retry: 3\n"), 0o600); errWrite != nil {
+	if errWrite := os.WriteFile(path, []byte("auth-dir: "+authDir+"\nrequest-retry: 3\nantigravity:\n  direct-api: true\n"), 0o600); errWrite != nil {
 		t.Fatalf("write config: %v", errWrite)
 	}
 	cfg, errLoad := config.LoadConfig(path)

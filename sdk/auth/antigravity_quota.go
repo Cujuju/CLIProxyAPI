@@ -148,8 +148,16 @@ func addAntigravityModelQuota(quotas map[string]AntigravityModelQuota, id string
 }
 
 func parseAntigravityQuotaValues(info ojson.Result) (float64, time.Time, bool) {
-	reset, _ := time.Parse(time.RFC3339Nano, info.Get("resetTime").Str)
-	remaining := info.Get("remainingFraction")
+	return parseAntigravityQuotaFields(info, "remainingFraction", "resetTime")
+}
+
+func parseAntigravityQuotaFields(info ojson.Result, fractionField, resetField string) (float64, time.Time, bool) {
+	reset, _ := time.Parse(time.RFC3339Nano, info.Get(resetField).Str)
+	if !reset.After(time.Unix(0, 0)) {
+		// The CLI reports an unstarted window's reset as the Unix epoch.
+		reset = time.Time{}
+	}
+	remaining := info.Get(fractionField)
 	if !remaining.Exists() {
 		// Proto3 omits a zero fraction. A valid reset distinguishes it from missing quota.
 		return 0, reset, !reset.IsZero()

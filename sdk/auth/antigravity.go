@@ -36,6 +36,9 @@ func (AntigravityAuthenticator) Login(ctx context.Context, cfg *config.Config, o
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")
 	}
+	if !cfg.AntigravityDirectAPIEnabled() {
+		return nil, config.ErrAntigravityDirectAPIDisabled
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}

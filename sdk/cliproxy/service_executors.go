@@ -382,6 +382,10 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		}
 		return
 	case "antigravity":
+		if !cfg.AntigravityDirectAPIEnabled() {
+			s.retireAntigravityExecutor()
+			return
+		}
 		s.registerExecutor(executor.NewAntigravityExecutor(cfg))
 	case "claude":
 		if existing, found := s.ownedExecutor("claude"); found {

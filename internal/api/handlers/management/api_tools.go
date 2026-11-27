@@ -276,6 +276,9 @@ func (h *Handler) resolveTokenForAuth(ctx context.Context, auth *coreauth.Auth, 
 	}
 
 	if strings.EqualFold(strings.TrimSpace(auth.Provider), "antigravity") {
+		if !h.configSnapshot().AntigravityDirectAPIEnabled() {
+			return "", config.ErrAntigravityDirectAPIDisabled
+		}
 		token, errToken := h.refreshAntigravityOAuthAccessToken(ctx, auth, requestProxyURL)
 		return token, errToken
 	}

@@ -32,7 +32,7 @@ func TestAntigravityUnsupportedSummaryPreservesSharedBackoff(t *testing.T) {
 				w.WriteHeader(status)
 			}))
 			defer server.Close()
-			svc := &Service{}
+			svc := &Service{cfg: antigravityDirectAPI(nil)}
 			auth := antigravityTestAuth("shared-backoff", server.URL)
 			key := svc.antigravityCapabilityKey(auth)
 			if status == http.StatusUnauthorized {
@@ -190,7 +190,7 @@ func TestAntigravityFailureBackoffIntegration(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{cfg: &config.Config{}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: manager}
 	auth := antigravityTestAuth("backoff", server.URL)
 	auth, _ = manager.Register(t.Context(), auth)
 	t.Cleanup(func() { GlobalModelRegistry().UnregisterClient(auth.ID) })
@@ -294,7 +294,7 @@ func TestAntigravityForbiddenBackoffPersistsAcrossTokenRotationAndCapsAt60Minute
 	defer server.Close()
 
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{cfg: &config.Config{}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: manager}
 	auth := antigravityTestAuth("forbidden-backoff", server.URL)
 	auth, errRegister := manager.Register(t.Context(), auth)
 	if errRegister != nil {
@@ -424,7 +424,7 @@ func TestAntigravityAuthError401UsesLongerBackoffAndUnblocksOnTokenRotation(t *t
 	}))
 	defer server.Close()
 
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("auth-401", server.URL)
 	svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
 	if calls.Load() != 1 {

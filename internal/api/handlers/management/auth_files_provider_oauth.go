@@ -731,6 +731,11 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
 
+	if !h.configSnapshot().AntigravityDirectAPIEnabled() {
+		c.JSON(http.StatusConflict, gin.H{"error": config.ErrAntigravityDirectAPIDisabled.Error()})
+		return
+	}
+
 	fmt.Println("Initializing Antigravity authentication...")
 
 	sessionProxyURL := oauthSessionProxyURLFromContext(c)

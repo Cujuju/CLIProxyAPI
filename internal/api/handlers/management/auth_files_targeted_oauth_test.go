@@ -308,7 +308,7 @@ func TestStartOAuthV8TargetedSessionRegistrationAcrossBuiltinProviders(t *testin
 		})
 	}
 
-	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir, Port: 8317}, manager)
+	h := NewHandlerWithoutConfigFilePath(antigravityDirectAPI(&config.Config{AuthDir: authDir, Port: 8317}), manager)
 	router := gin.New()
 	router.POST("/v8/management/oauth/auth-url", h.StartOAuthV8)
 
@@ -383,7 +383,7 @@ func TestTargetedOAuthReloginAntigravityRejectsMismatchedAccountAndUpdatesMatchi
 	}
 	t.Cleanup(func() { newAntigravityOAuthService = origAgFactory })
 
-	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir, Port: 8317}, manager)
+	h := NewHandlerWithoutConfigFilePath(antigravityDirectAPI(&config.Config{AuthDir: authDir, Port: 8317}), manager)
 	router := gin.New()
 	router.POST("/v8/management/oauth/auth-url", h.StartOAuthV8)
 	router.GET("/v8/management/oauth/status", h.GetAuthStatus)
@@ -772,7 +772,7 @@ func TestTargetedOAuthReloginReviewEdgeCasesAndVerification(t *testing.T) {
 		t.Fatalf("register kimi-ai: %v", errRegKimiAI)
 	}
 
-	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir, Port: 8317}, manager)
+	h := NewHandlerWithoutConfigFilePath(antigravityDirectAPI(&config.Config{AuthDir: authDir, Port: 8317}), manager)
 	router := gin.New()
 	router.POST("/v8/management/oauth/auth-url", h.StartOAuthV8)
 	router.GET("/v8/management/oauth/status", h.GetAuthStatus)
@@ -980,7 +980,7 @@ func TestTargetedOAuthReloginReviewEdgeCasesAndVerification(t *testing.T) {
 	newAntigravityOAuthService = func(*config.Config) antigravityOAuthService { return agSvc }
 	t.Cleanup(func() { newAntigravityOAuthService = origAG })
 
-	hVerify := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir, Port: 8317}, managerWithVerify)
+	hVerify := NewHandlerWithoutConfigFilePath(antigravityDirectAPI(&config.Config{AuthDir: authDir, Port: 8317}), managerWithVerify)
 	routerVerify := gin.New()
 	routerVerify.POST("/v8/management/oauth/auth-url", hVerify.StartOAuthV8)
 	routerVerify.GET("/v8/management/oauth/status", hVerify.GetAuthStatus)

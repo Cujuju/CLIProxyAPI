@@ -52,6 +52,9 @@ const (
 	DefaultPanelGitHubRepository = internalconfig.DefaultPanelGitHubRepository
 )
 
+// ErrAntigravityDirectAPIDisabled refuses a call to Google as the Antigravity client in quota-only mode.
+var ErrAntigravityDirectAPIDisabled = internalconfig.ErrAntigravityDirectAPIDisabled
+
 func LoadConfig(configFile string) (*Config, error) { return internalconfig.LoadConfig(configFile) }
 
 func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
