@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -268,6 +269,12 @@ type ProxyConnectionPoolConfig struct {
 
 // AntigravityConfig configures provider-wide Antigravity request behavior.
 type AntigravityConfig struct {
+	// DirectAPI enables every call to Google's Cloud Code API as the Antigravity
+	// client: inference, token refresh, model and quota probes, project
+	// discovery and login. Defaults to false (quota-only): credentials stay
+	// listed but are never routed to, and quota comes from the official CLI.
+	DirectAPI bool `yaml:"direct-api,omitempty" json:"direct-api,omitempty"`
+
 	// SensitiveWords is a list of words to obfuscate with invisible combining grapheme joiners in system instructions.
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
 
@@ -286,6 +293,15 @@ type AntigravityConfig struct {
 	// is explicitly configured. Set to "0", "off", "false", "none", or
 	// "disabled" to explicitly disable the pause.
 	TOSPauseWindow string `yaml:"tos-pause-window,omitempty" json:"tos-pause-window,omitempty"`
+}
+
+// ErrAntigravityDirectAPIDisabled refuses a call to Google as the Antigravity client in quota-only mode.
+var ErrAntigravityDirectAPIDisabled = errors.New("antigravity direct API is off (antigravity.direct-api: false); quota comes from the official CLI")
+
+// AntigravityDirectAPIEnabled reports whether Antigravity may call Google's
+// Cloud Code API directly. A nil config keeps the quota-only default.
+func (c *Config) AntigravityDirectAPIEnabled() bool {
+	return c != nil && c.Antigravity.DirectAPI
 }
 
 // AntigravityConnectionPoolConfig controls upstream HTTP/1.1 connection pooling behavior for Antigravity.

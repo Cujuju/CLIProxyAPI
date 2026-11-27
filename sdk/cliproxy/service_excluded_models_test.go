@@ -293,7 +293,7 @@ func TestRegisterModelsForAuth_AntigravityFetchesWebSearchCapability(t *testing.
 	}))
 	defer server.Close()
 
-	service := &Service{cfg: &config.Config{}}
+	service := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := &coreauth.Auth{
 		ID:       "auth-antigravity-fetch-models",
 		Provider: "antigravity",

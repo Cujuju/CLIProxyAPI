@@ -80,7 +80,7 @@ func TestAntigravityCapabilityProbe_DeduplicatesConcurrentRequests(t *testing.T)
 		_, _ = w.Write([]byte(`{"models":{"allowed":{}},"webSearchModelIds":["allowed"]}`))
 	}))
 	t.Cleanup(func() { unblock(); server.Close() })
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("shared", server.URL)
 	var wg sync.WaitGroup
 	for range 12 {
@@ -118,7 +118,7 @@ func TestAntigravityCapabilityProbe_AccountAndProjectIsolation(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"models": map[string]any{id: map[string]any{}}})
 	}))
 	defer server.Close()
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	a, b := antigravityTestAuth("a", server.URL), antigravityTestAuth("b", server.URL)
 	for _, auth := range []*coreauth.Auth{a, b, a, b} {
 		hints := svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
@@ -160,7 +160,7 @@ func TestAntigravityCapabilityProbe_TTLAndStaleOnError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"models":{"allowed":{}}}`))
 	}))
 	defer server.Close()
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("ttl", server.URL)
 	svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
 	now = now.Add(antigravityCapabilityCacheTTL - time.Second)
@@ -201,7 +201,7 @@ func TestAntigravityCapabilityProbe_FailuresAreAccountScoped(t *testing.T) {
 				_, _ = w.Write([]byte(`{"models":{"allowed":{}}}`))
 			}))
 			defer server.Close()
-			svc := &Service{cfg: &config.Config{}}
+			svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 			bad := antigravityTestAuth("bad", server.URL)
 			good := antigravityTestAuth("good", server.URL)
 			if hints := svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), bad); hints.ModelIDs != nil {

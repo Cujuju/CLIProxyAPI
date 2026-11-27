@@ -731,6 +731,11 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
 
+	if !h.configSnapshot().AntigravityDirectAPIEnabled() {
+		c.JSON(http.StatusConflict, gin.H{"error": config.ErrAntigravityDirectAPIDisabled.Error()})
+		return
+	}
+
 	fmt.Println("Initializing Antigravity authentication...")
 
 	sessionProxyURL := oauthSessionProxyURLFromContext(c)
@@ -810,6 +815,11 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 			time.Sleep(500 * time.Millisecond)
 		}
 
+		if !h.configSnapshot().AntigravityDirectAPIEnabled() {
+			// Direct API turned off while the session awaited consent.
+			SetOAuthSessionError(state, config.ErrAntigravityDirectAPIDisabled.Error())
+			return
+		}
 		tokenResp, errToken := authSvc.ExchangeCodeForTokens(ctx, authCode, redirectURI)
 		if errToken != nil {
 			log.Errorf("Failed to exchange token: %s", redactSessionProxyInString(errToken.Error(), sessionProxyURL))

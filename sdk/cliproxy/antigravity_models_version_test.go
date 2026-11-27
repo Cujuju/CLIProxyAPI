@@ -55,7 +55,7 @@ func TestAntigravityCapabilitiesRefreshOnClientVersionChange(t *testing.T) {
 				return antigravityVersionTestResponse(req, http.StatusOK, `{"models":{"old":{},"new":{}}}`), nil
 			})
 			t.Cleanup(func() { http.DefaultTransport = previous })
-			svc := &Service{cfg: &config.Config{}}
+			svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 			auth := antigravityTestAuth("version-change", "https://version.invalid")
 			svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
 			svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
@@ -79,7 +79,7 @@ func TestAntigravityVersionChangeKeepsPersistedHintsAsStaleFallback(t *testing.T
 	resetAntigravityCapabilityCache()
 	t.Cleanup(resetAntigravityCapabilityCache)
 	currentUA := overrideAntigravityModelUserAgent(t)
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("version-persisted", "https://version.invalid")
 	auth.Metadata[antigravityPersistedHintsMetaKey] = buildPersistedAntigravityCapabilityHintsValue(
 		"project-version-persisted", "https://version.invalid",
@@ -129,7 +129,7 @@ func TestAntigravityProbeKeepsVersionSnapshotWhileWaitingForSlot(t *testing.T) {
 			return antigravityVersionTestResponse(req, http.StatusOK, `{"models":{"gemini-3-flash":{}}}`), nil
 		})
 		defer func() { http.DefaultTransport = previousTransport }()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 		auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("version-queued", "https://version.invalid"))
 		if errRegister != nil {
 			t.Fatal(errRegister)
@@ -181,7 +181,7 @@ func TestAntigravityVersionChangeUnblocksAccountRefresh(t *testing.T) {
 			return antigravityVersionTestResponse(req, http.StatusOK, `{"models":{"gemini-3-flash":{}}}`), nil
 		})
 		defer func() { http.DefaultTransport = previous }()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 		auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("version-stalled", "https://version.invalid"))
 		if errRegister != nil {
 			t.Fatal(errRegister)

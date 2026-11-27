@@ -24,7 +24,7 @@ func TestAntigravityCapabilityProbe_CallerCancellation(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan struct{})
@@ -49,7 +49,7 @@ func TestAntigravityCapabilityProbe_UsesFirstConfiguredEndpoint(t *testing.T) {
 		_, _ = w.Write([]byte(`{"models":{"second":{}}}`))
 	}))
 	defer second.Close()
-	svc := &Service{cfg: &config.Config{}}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{})}
 	auth := antigravityTestAuth("route", first.URL)
 	auth.Attributes["base_urls"] = first.URL + "," + second.URL
 	hints := svc.fetchAntigravityModelCapabilityHintsForAuth(t.Context(), auth)
@@ -127,7 +127,7 @@ func TestAntigravityAsyncProbe_DiscardsStaleProbeWhenAuthReRegistered(t *testing
 
 	manager := coreauth.NewManager(nil, nil, nil)
 	svc := &Service{
-		cfg:         &config.Config{},
+		cfg:         antigravityDirectAPI(&config.Config{}),
 		coreManager: manager,
 	}
 
@@ -187,7 +187,7 @@ func TestAntigravityAsyncProbe_PreservesPluginModels(t *testing.T) {
 	defer server.Close()
 
 	svc := &Service{
-		cfg: &config.Config{},
+		cfg: antigravityDirectAPI(&config.Config{}),
 	}
 
 	auth := &coreauth.Auth{
@@ -255,7 +255,7 @@ func TestAntigravityAsyncProbe_AppliesCapabilitiesToAliasedAndPrefixedModels(t *
 	}
 
 	svc := &Service{
-		cfg: cfg,
+		cfg: antigravityDirectAPI(cfg),
 	}
 
 	auth := &coreauth.Auth{
@@ -341,7 +341,7 @@ func TestAntigravityAsyncProbe_UnregisteredClientNotResurrected(t *testing.T) {
 
 	manager := coreauth.NewManager(nil, nil, nil)
 	svc := &Service{
-		cfg:         &config.Config{},
+		cfg:         antigravityDirectAPI(&config.Config{}),
 		coreManager: manager,
 	}
 
@@ -402,7 +402,7 @@ func TestAntigravityAsyncProbe_NormalRequestsDoNotDiscardProbe(t *testing.T) {
 
 	manager := coreauth.NewManager(nil, nil, nil)
 	svc := &Service{
-		cfg:         &config.Config{},
+		cfg:         antigravityDirectAPI(&config.Config{}),
 		coreManager: manager,
 	}
 

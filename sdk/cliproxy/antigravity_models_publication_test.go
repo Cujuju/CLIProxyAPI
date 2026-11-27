@@ -42,7 +42,7 @@ func TestAntigravityRegistryPublicationFencesCacheRevision(t *testing.T) {
 	resetAntigravityCapabilityCache()
 	t.Cleanup(resetAntigravityCapabilityCache)
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{cfg: &config.Config{}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: manager}
 	auth := antigravityTestAuth("publication-version", "http://127.0.0.1:1")
 	auth, _ = manager.Register(t.Context(), auth)
 	t.Cleanup(func() { GlobalModelRegistry().UnregisterClient(auth.ID) })

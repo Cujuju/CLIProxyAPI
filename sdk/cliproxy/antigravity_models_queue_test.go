@@ -22,7 +22,7 @@ func TestAntigravityRefreshSkipsPluginOwnedModels(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		resetAntigravityCapabilityCache()
 		defer resetAntigravityCapabilityCache()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil), pluginHost: pluginhost.New()}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil), pluginHost: pluginhost.New()}
 		auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("plugin-owned-refresh", "https://unused.invalid"))
 		if errRegister != nil {
 			t.Fatal(errRegister)
@@ -78,7 +78,7 @@ func TestAntigravityRegistrationCoalescesLatestPublication(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				resetAntigravityCapabilityCache()
 				defer resetAntigravityCapabilityCache()
-				svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+				svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 				auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("coalesced-"+name, "https://stalled.invalid"))
 				if errRegister != nil {
 					t.Fatal(errRegister)
@@ -156,7 +156,7 @@ func TestAntigravityQueuedAuthUpdateRejectsLateStaleCaller(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		resetAntigravityCapabilityCache()
 		defer resetAntigravityCapabilityCache()
-		svc := &Service{cfg: &config.Config{SDKConfig: config.SDKConfig{ForceModelPrefix: true}}, coreManager: coreauth.NewManager(nil, nil, nil)}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{SDKConfig: config.SDKConfig{ForceModelPrefix: true}}), coreManager: coreauth.NewManager(nil, nil, nil)}
 		auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("coalesced-auth-update", "https://stalled.invalid"))
 		if errRegister != nil {
 			t.Fatal(errRegister)

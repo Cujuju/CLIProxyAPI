@@ -47,7 +47,7 @@ func TestAntigravityMissingSummaryKeepsRefreshDueAfterFailedFallback(t *testing.
 			})
 			t.Cleanup(func() { http.DefaultTransport = transport })
 			manager := coreauth.NewManager(nil, nil, nil)
-			svc := &Service{coreManager: manager}
+			svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 			auth, err := manager.Register(t.Context(), antigravityTestAuth("summary-retry", "https://quota.invalid"))
 			if err != nil {
 				t.Fatal(err)
@@ -79,7 +79,7 @@ func TestAntigravityStalledAccountDoesNotBlockOtherRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		resetAntigravityCapabilityCache()
 		defer resetAntigravityCapabilityCache()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 		for _, id := range []string{"refresh-stall", "refresh-retry"} {
 			auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth(id, "https://refresh.invalid"))
 			if errRegister != nil {
@@ -129,7 +129,7 @@ func TestAntigravityPluginRefreshDoesNotWaitForProbe(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		resetAntigravityCapabilityCache()
 		defer resetAntigravityCapabilityCache()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil), pluginHost: pluginhost.New()}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil), pluginHost: pluginhost.New()}
 		auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("plugin-refresh-stall", "https://refresh.invalid"))
 		if errRegister != nil {
 			t.Fatal(errRegister)
@@ -175,7 +175,7 @@ func TestAntigravityRefreshBoundsQueuedWorkAndCancels(t *testing.T) {
 		slots := antigravityProbeSlots
 		antigravityProbeSlots = make(chan struct{}, cap(slots))
 		defer func() { antigravityProbeSlots = slots }()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil), pluginHost: pluginhost.New()}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil), pluginHost: pluginhost.New()}
 		for range cap(antigravityProbeSlots) {
 			antigravityProbeSlots <- struct{}{}
 		}
@@ -238,7 +238,7 @@ func TestAntigravityShutdownCancelsServiceProbes(t *testing.T) {
 		defer resetAntigravityCapabilityCache()
 		lifetime, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil), antigravityContext: lifetime, runCancel: cancel}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil), antigravityContext: lifetime, runCancel: cancel}
 		auth, errRegister := svc.coreManager.Register(t.Context(), antigravityTestAuth("shutdown-probe", "https://refresh.invalid"))
 		if errRegister != nil {
 			t.Fatal(errRegister)

@@ -97,7 +97,7 @@ func TestAntigravityCachedRegistrationPreservesCooldownWhileProbePending(t *test
 				}
 			}))
 			ctx, cancel := context.WithCancel(t.Context())
-			svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+			svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 			t.Cleanup(func() {
 				unblock()
 				svc.WaitAntigravityProbes()

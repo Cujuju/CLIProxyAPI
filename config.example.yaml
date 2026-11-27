@@ -1292,6 +1292,8 @@ oauth:
 
     # Antigravity provider behavior.
     antigravity:
+      # direct-api: false             # default false = quota-only: never call Google's Cloud Code API as the Antigravity
+                                    # client (no routing, refresh, probes or login); quota comes from the official CLI
       # sensitive-words:              # optional: words to obfuscate with combining grapheme joiners (U+034F) in system instructions
       #   - "API"
       #   - "proxy"

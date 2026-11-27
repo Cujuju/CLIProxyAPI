@@ -271,6 +271,10 @@ func (s *Service) registerAvailableExecutors(ctx context.Context, opts executorR
 	}
 	// Keep all Service-owned executor registration paths here so native, Home,
 	// auth-derived, and plugin executors stay in the same binding order.
+	if !s.antigravityDirectAPIEnabled() {
+		// Retire even when no enabled credential reaches the per-auth switch below.
+		s.retireAntigravityExecutor()
+	}
 	if opts.includeBaseline {
 		s.registerExecutorsForAuths(baselineExecutorAuths(), opts.forceReplaceAuths)
 	}
@@ -382,6 +386,10 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		}
 		return
 	case "antigravity":
+		if !cfg.AntigravityDirectAPIEnabled() {
+			s.retireAntigravityExecutor()
+			return
+		}
 		s.registerExecutor(executor.NewAntigravityExecutor(cfg))
 	case "claude":
 		if existing, found := s.ownedExecutor("claude"); found {

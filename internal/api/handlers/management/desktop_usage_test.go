@@ -592,3 +592,33 @@ func TestDesktopWindowsDisabledReason(t *testing.T) {
 		t.Fatalf("disabled_reason by window = %v, want %v", reasons, want)
 	}
 }
+
+// tokenFreeUsageLookup reads usage without the credential's access token.
+type tokenFreeUsageLookup struct{ tokenCapturingUsageLookup }
+
+func (*tokenFreeUsageLookup) NeedsAccessToken(*coreauth.Auth) bool { return false }
+
+func TestRefreshUsageWindowsSkipsRenewalForTokenFreeLookup(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	exec := &refreshRecordExecutor{provider: "custom-oauth"}
+	manager.RegisterExecutor(exec)
+	cfg := &config.Config{AuthDir: t.TempDir()}
+	manager.SetConfig(cfg)
+	expired := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	registerAuthForLookupTest(t, manager, &coreauth.Auth{
+		ID: "cred-cli", Index: "idx-cli", Provider: "custom-oauth",
+		Attributes: map[string]string{"runtime_only": "true"},
+		Metadata:   map[string]any{"access_token": "stale", "refresh_token": "rt", "expired": expired},
+	})
+	h := NewHandlerWithoutConfigFilePath(cfg, manager)
+	lookup := &tokenFreeUsageLookup{tokenCapturingUsageLookup{provider: "custom-oauth", manager: manager, seenTokens: map[string]string{}}}
+	h.RegisterUsageLookup(lookup, manager)
+
+	for _, body := range []string{`{"auth_index":"idx-cli"}`, ""} {
+		clear(lookup.seenTokens)
+		payload := decodeDesktopUsage(t, serveDesktop(t, h.RefreshUsageWindows, http.MethodPost, body, "127.0.0.1:1"))
+		if len(payload.Errors) != 0 || lookup.seenTokens["cred-cli"] != "stale" || exec.refreshCnt.Load() != 0 {
+			t.Fatalf("body %q: errors=%v seen=%v refreshes=%d; want lookup without renewal", body, payload.Errors, lookup.seenTokens, exec.refreshCnt.Load())
+		}
+	}
+}

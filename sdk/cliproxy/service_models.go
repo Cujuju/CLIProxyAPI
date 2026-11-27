@@ -71,6 +71,10 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 	if compatDetected {
 		provider = "openai-compatibility"
 	}
+	if provider == "antigravity" && !cfg.AntigravityDirectAPIEnabled() {
+		// Quota-only: the credential stays listed but serves no models, so nothing routes or probes.
+		return s.unregisterModelsForAuthFenced(a, fence)
+	}
 	excluded := oauthExcludedModelsForConfig(cfg, provider, authKind)
 	// The "excluded_models" attribute holds only the credential's own exclusions.
 	// When present it takes priority over the global oauth-excluded-models config;

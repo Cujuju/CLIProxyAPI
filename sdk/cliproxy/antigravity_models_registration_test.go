@@ -49,7 +49,7 @@ func TestAntigravityDynamicRegistrationLifecycle(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(response.Load())
 	}))
 	defer server.Close()
-	cfg := &config.Config{OAuthModelAlias: map[string][]config.OAuthModelAlias{"antigravity": {{Name: allowed, Alias: "my-model"}}}}
+	cfg := antigravityDirectAPI(&config.Config{OAuthModelAlias: map[string][]config.OAuthModelAlias{"antigravity": {{Name: allowed, Alias: "my-model"}}}})
 	manager := coreauth.NewManager(nil, nil, nil)
 	svc := &Service{cfg: cfg, coreManager: manager}
 	auth := antigravityTestAuth("dynamic-account", server.URL)
@@ -172,7 +172,7 @@ func TestAntigravityDynamicRegistrationBatches(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{cfg: &config.Config{}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: manager}
 	for i := range accounts {
 		auth := antigravityTestAuth(fmt.Sprint("batch-", i), server.URL)
 		if _, err := manager.Register(t.Context(), auth); err != nil {
@@ -215,7 +215,7 @@ func TestAntigravityDynamicRegistrationDropsStaleFullCatalog(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{cfg: &config.Config{}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: manager}
 	auth := antigravityTestAuth("stale-full", server.URL)
 	auth, _ = manager.Register(t.Context(), auth)
 	t.Cleanup(func() { GlobalModelRegistry().UnregisterClient(auth.ID) })
@@ -262,7 +262,7 @@ func TestAntigravityRestartSeedsPersistedHintsBeforeProbeAndAcrossProbeFailure(t
 	store.SetBaseDir(authDir)
 
 	manager := coreauth.NewManager(store, nil, nil)
-	svc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: manager}
 	auth := &coreauth.Auth{
 		ID:       "antigravity-restart.json",
 		FileName: "antigravity-restart.json",
@@ -306,7 +306,7 @@ func TestAntigravityRestartSeedsPersistedHintsBeforeProbeAndAcrossProbeFailure(t
 	if !ok || loadedAuth == nil {
 		t.Fatal("restarted manager did not load auth from disk")
 	}
-	restartedSvc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: restartedManager}
+	restartedSvc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: restartedManager}
 
 	restartedSvc.registerModelsForAuth(t.Context(), loadedAuth)
 	<-probeStarted
@@ -368,7 +368,7 @@ func TestAntigravityAuthUpdateWithSkipPersistStillPersistsHintsAcrossRestart(t *
 	store := sdkAuth.NewFileTokenStore()
 	store.SetBaseDir(authDir)
 	manager := coreauth.NewManager(store, nil, nil)
-	svc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: manager}
 	auth := &coreauth.Auth{
 		ID:       "antigravity-watcher.json",
 		FileName: "antigravity-watcher.json",
@@ -409,7 +409,7 @@ func TestAntigravityAuthUpdateWithSkipPersistStillPersistsHintsAcrossRestart(t *
 	if !ok || loadedAuth == nil {
 		t.Fatal("restarted manager did not load auth")
 	}
-	restartedSvc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: restartedManager}
+	restartedSvc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: restartedManager}
 	if hints := restartedSvc.cachedAntigravityHints(loadedAuth); hints.ModelIDs == nil {
 		t.Fatal("expected capability hints to be persisted to disk when auth was registered via WithSkipPersist")
 	}
@@ -597,7 +597,7 @@ func TestAntigravityPersistedHintsRetriesAfterTransientStoreFailure(t *testing.T
 	store := &flakyAntigravityHintStore{FileTokenStore: baseStore}
 
 	manager := coreauth.NewManager(store, nil, nil)
-	svc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: manager}
 	auth := &coreauth.Auth{
 		ID:       "antigravity-retry-persist.json",
 		FileName: "antigravity-retry-persist.json",
@@ -648,7 +648,7 @@ func TestAntigravityPersistedHintsRetriesAfterTransientStoreFailure(t *testing.T
 		t.Fatal(errLoad)
 	}
 	loadedAuth, _ := restartedManager.GetByID(auth.ID)
-	restartedSvc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: restartedManager}
+	restartedSvc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: restartedManager}
 	if hints := restartedSvc.cachedAntigravityHints(loadedAuth); hints.ModelIDs == nil {
 		t.Fatal("expected identical hints to be persisted after transient store failure recovered")
 	}
@@ -698,7 +698,7 @@ func TestAntigravityBlockedHintPersistenceDoesNotBlockPublicationOrOtherAccounts
 	lifetime, cancelLifetime := context.WithCancel(t.Context())
 	defer cancelLifetime()
 	manager := coreauth.NewManager(store, nil, nil)
-	svc := &Service{cfg: &config.Config{AuthDir: authDir}, coreManager: manager, antigravityContext: lifetime}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{AuthDir: authDir}), coreManager: manager, antigravityContext: lifetime}
 
 	authA := &coreauth.Auth{
 		ID:       "antigravity-slow-save-a.json",

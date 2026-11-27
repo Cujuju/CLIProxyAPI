@@ -63,7 +63,7 @@ func TestAntigravityUsageSummaryWindows(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 	auth, err := manager.Register(t.Context(), antigravityTestAuth("summary", server.URL))
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestAntigravityUsageSummaryKeepsQueuedWindowUnstarted(t *testing.T) {
 		defer func() { http.DefaultTransport = oldTransport }()
 
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		auth, err := manager.Register(t.Context(), antigravityTestAuth("summary-queued", "https://quota.invalid"))
 		if err != nil {
 			t.Fatal(err)
@@ -217,7 +217,7 @@ func TestAntigravityUsageDoesNotShareCatalogOnlyResult(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 	auth, err := manager.Register(t.Context(), antigravityTestAuth("usage-after-catalog", server.URL))
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestAntigravityScheduledRefreshUpdatesUsage(t *testing.T) {
 			}))
 			defer server.Close()
 			manager := coreauth.NewManager(nil, nil, nil)
-			svc := &Service{coreManager: manager}
+			svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 			auth, err := manager.Register(t.Context(), antigravityTestAuth("scheduled-usage", server.URL))
 			if err != nil {
 				t.Fatal(err)
@@ -369,7 +369,7 @@ func TestAntigravityUsageBackgroundProbesRunIndependently(t *testing.T) {
 				})
 				defer func() { http.DefaultTransport = oldTransport }()
 				manager := coreauth.NewManager(nil, nil, nil)
-				svc := &Service{coreManager: manager}
+				svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 				auth, err := manager.Register(t.Context(), antigravityTestAuth("background-independence", "https://quota.invalid"))
 				if err != nil {
 					t.Fatal(err)
@@ -434,7 +434,7 @@ func TestAntigravityUsageFallbackPublishesDespiteStalledSummaryRetry(t *testing.
 		})
 		defer func() { http.DefaultTransport = oldTransport }()
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		priorUsed := 90.0
 		seed := antigravityTestAuth("fallback-during-retry", "https://quota.invalid")
 		// Seed a prior summary window so catalogOnly=true cannot mask a dropped fallback.
@@ -503,7 +503,7 @@ func TestAntigravityCanceledOnDemandRefreshDoesNotSuppressBackgroundFallback(t *
 		})
 		defer func() { http.DefaultTransport = oldTransport }()
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		priorUsed := 90.0
 		seed := antigravityTestAuth("canceled-on-demand", "https://quota.invalid")
 		seed.Quota.LookedUpAt = time.Now().Add(-time.Hour)
@@ -603,7 +603,7 @@ func TestAntigravityFallbackRenewsSummaryTTLWhenCatalogAlreadyPublishedQuota(t *
 		})
 		defer func() { http.DefaultTransport = oldTransport }()
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		auth, err := manager.Register(t.Context(), antigravityTestAuth("fallback-reuses-catalog", "https://quota.invalid"))
 		if err != nil {
 			t.Fatal(err)
@@ -666,7 +666,7 @@ func TestAntigravityUsageBackgroundQueuesCancel(t *testing.T) {
 				defer func() { http.DefaultTransport = oldTransport }()
 				lifetime, cancel := context.WithCancel(t.Context())
 				manager := coreauth.NewManager(nil, nil, nil)
-				svc := &Service{coreManager: manager, antigravityContext: lifetime, runCancel: cancel}
+				svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager, antigravityContext: lifetime, runCancel: cancel}
 				defer func() { cancel(); svc.WaitAntigravityProbes() }()
 				for _, id := range []string{"connected", "waiting-for-slots"} {
 					auth, err := manager.Register(t.Context(), antigravityTestAuth(id, "https://quota.invalid"))
@@ -744,7 +744,7 @@ func TestAntigravityUsageStaleFallbackDoesNotOverwriteNewerSummary(t *testing.T)
 	}))
 	defer server.Close()
 	manager := coreauth.NewManager(nil, nil, nil)
-	svc := &Service{coreManager: manager}
+	svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 	auth, err := manager.Register(t.Context(), antigravityTestAuth("stale-fallback", server.URL))
 	if err != nil {
 		t.Fatal(err)
@@ -797,7 +797,7 @@ func TestAntigravityBackgroundUsageFetchesCatalogFallbackWhenCacheWarmOrRouteCha
 		}))
 		defer server.Close()
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		auth, err := manager.Register(t.Context(), antigravityTestAuth("warm-cache-fallback", server.URL))
 		if err != nil {
 			t.Fatal(err)
@@ -849,7 +849,7 @@ func TestAntigravityBackgroundUsageFetchesCatalogFallbackWhenCacheWarmOrRouteCha
 		}))
 		defer server.Close()
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		auth, err := manager.Register(t.Context(), antigravityTestAuth("route-change-fallback", server.URL))
 		if err != nil {
 			t.Fatal(err)
@@ -885,7 +885,7 @@ func TestAntigravityBackgroundUsageFetchesCatalogFallbackWhenCacheWarmOrRouteCha
 		}))
 		defer server.Close()
 		manager := coreauth.NewManager(nil, nil, nil)
-		svc := &Service{coreManager: manager}
+		svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 		auth, err := manager.Register(t.Context(), antigravityTestAuth("catalog-503-empty-summary", server.URL))
 		if err != nil {
 			t.Fatal(err)
@@ -943,7 +943,7 @@ func TestAntigravityProbeBackoffScopes(t *testing.T) {
 			}))
 			defer server.Close()
 			manager := coreauth.NewManager(nil, nil, nil)
-			svc := &Service{coreManager: manager}
+			svc := &Service{cfg: antigravityDirectAPI(nil), coreManager: manager}
 			auth, err := manager.Register(t.Context(), antigravityTestAuth("probe-backoff", server.URL))
 			if err != nil {
 				t.Fatal(err)

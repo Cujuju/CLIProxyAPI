@@ -67,7 +67,7 @@ func TestAntigravityRemovedAccountsReleaseProbeSlots(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
-	svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+	svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 	t.Cleanup(func() { cancel(); svc.WaitAntigravityProbes(); server.Close() })
 	for i := range modelRegistrationMaxWorkersPerCategory {
 		auth, _ := svc.coreManager.Register(ctx, antigravityTestAuth(fmt.Sprint("removed-", i), server.URL))
@@ -97,7 +97,7 @@ func TestAntigravityRetrySchedulerPreservesJitterDeadlines(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		resetAntigravityCapabilityCache()
 		defer resetAntigravityCapabilityCache()
-		svc := &Service{cfg: &config.Config{}, coreManager: coreauth.NewManager(nil, nil, nil)}
+		svc := &Service{cfg: antigravityDirectAPI(&config.Config{}), coreManager: coreauth.NewManager(nil, nil, nil)}
 		start := time.Now()
 		type observation struct {
 			id      string

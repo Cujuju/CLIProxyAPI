@@ -59,6 +59,17 @@ type UsageLookup interface {
 	RefreshAll(ctx context.Context) map[string]error
 }
 
+// accessTokenOptionalLookup is implemented by lookups that can read usage
+// without the credential's access token, so an expired one is not renewed first.
+type accessTokenOptionalLookup interface {
+	NeedsAccessToken(auth *coreauth.Auth) bool
+}
+
+func usageLookupNeedsAccessToken(lookup UsageLookup, auth *coreauth.Auth) bool {
+	optional, ok := lookup.(accessTokenOptionalLookup)
+	return !ok || optional.NeedsAccessToken(auth)
+}
+
 type claudeUsageLookup struct {
 	manager *coreauth.Manager
 	config  func() *config.Config
@@ -225,7 +236,7 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "credential is not eligible for usage lookup"})
 			return
 		}
-		if accessTokenExpired(auth, now) {
+		if accessTokenExpired(auth, now) && usageLookupNeedsAccessToken(lookups[lookupIndex], auth) {
 			refreshed, errRenew := manager.ForceRefreshAuth(ctx, auth.ID)
 			if errRenew != nil {
 				failures[auth.ID] = errRenew.Error()
@@ -245,7 +256,9 @@ func (h *Handler) RefreshUsageWindows(c *gin.Context) {
 			if ctx.Err() != nil {
 				break
 			}
-			if firstEligibleUsageLookupIndex(lookups, auth) == noEligibleUsageLookup || !accessTokenExpired(auth, now) {
+			lookupIndex := firstEligibleUsageLookupIndex(lookups, auth)
+			if lookupIndex == noEligibleUsageLookup || !accessTokenExpired(auth, now) ||
+				!usageLookupNeedsAccessToken(lookups[lookupIndex], auth) {
 				continue
 			}
 			if _, errRenew := manager.ForceRefreshAuth(ctx, auth.ID); errRenew != nil {

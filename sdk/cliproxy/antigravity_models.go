@@ -395,6 +395,10 @@ func (s *Service) fetchAntigravityProbeHints(ctx context.Context, auth *coreauth
 	if err := ctx.Err(); err != nil {
 		return cached(), err
 	}
+	if !s.antigravityDirectAPIEnabled() {
+		// Every Cloud Code probe passes here; quota-only mode refuses even a path the entry gates missed.
+		return cached(), config.ErrAntigravityDirectAPIDisabled
+	}
 	if req.AccessToken == "" {
 		return cached(), errors.New("antigravity model probe requires an access token")
 	}
@@ -854,6 +858,10 @@ func (s *Service) refreshAntigravityModels(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if !s.antigravityDirectAPIEnabled() {
+		s.refreshAntigravityCLIQuotaIfDue(ctx)
+		return
+	}
 	// A version change also invalidates connected probes. Cancel them before
 	// queuing successors so a stalled old request cannot hold its account worker.
 	s.cancelStaleAntigravityProbes("")
@@ -909,6 +917,9 @@ func (s *Service) nextAntigravityModelRefreshDelay() time.Duration {
 	next := now.Add(antigravityRefreshScanInterval)
 	if s == nil || s.coreManager == nil || s.antigravityHomeEnabled() {
 		return antigravityRefreshScanInterval
+	}
+	if !s.antigravityDirectAPIEnabled() {
+		return s.nextAntigravityCLIQuotaDelay()
 	}
 	usage := s.NewAntigravityUsageLookup()
 	for _, auth := range s.coreManager.List() {
