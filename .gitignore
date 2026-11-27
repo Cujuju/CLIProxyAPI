@@ -7,6 +7,8 @@ config.yaml
 .env
 
 # Generated content
+# Spillway's scripts/build-proxy.mjs output and tools
+/dist/
 bin/*
 /logs
 conv/*
